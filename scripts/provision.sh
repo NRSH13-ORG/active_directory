@@ -1,0 +1,364 @@
+#!/bin/bash
+# Re-exec with bash when invoked as `sh provision.sh` (macOS /bin/sh does not support bash syntax).
+if [ -z "${BASH_VERSION:-}" ]; then
+  exec bash "$0" "$@"
+fi
+
+set -euo pipefail
+SECONDS=0
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# shellcheck source=terminal-colors.sh
+source "$SCRIPT_DIR/terminal-colors.sh"
+
+print_prerequisites_steps() {
+  print_prerequisites_heading "Docker Desktop · ldapsearch (brew install openldap)"
+
+  printf "  ${H_RED}1.${RESET} Copy and customize environment variables:\n"
+  banner_cmd "cp .env.example .env"
+  printf "  ${H_RED}2.${RESET} Provision the Samba AD domain controller:\n"
+  banner_cmd "sh scripts/provision.sh --action apply"
+  printf "  ${H_RED}3.${RESET} Tear down containers and volumes:\n"
+  banner_cmd "sh scripts/provision.sh --action destroy"
+  printf "\n"
+}
+
+usage() {
+  print_module_header "Samba Active Directory"
+
+  printf "${YELLOW}Synopsis${RESET}\n"
+  usage_help_line "sh scripts/provision.sh --action apply|destroy"
+  usage_synopsis_example "sh scripts/provision.sh --action apply"
+  usage_synopsis_example "sh scripts/provision.sh --action destroy"
+  printf "\n"
+
+  printf "${YELLOW}Files${RESET}\n"
+  printf "  .env.example  (copy to .env and customize)\n"
+  printf "  docker-compose.yml\n\n"
+
+  print_prerequisites_steps
+  exit 1
+}
+
+load_config() {
+  if [[ -f "$ROOT_DIR/.env" ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    source "$ROOT_DIR/.env"
+    set +a
+  fi
+
+  DATA_DIR="${DATA_DIR:-$ROOT_DIR/samba-data}"
+  IMAGE_NAME="${IMAGE_NAME:-local-samba-ad-dc}"
+  CONTAINER_NAME="${CONTAINER_NAME:-samba-ad-dc}"
+  DOMAIN="${DOMAIN:-NRSH13-HADOOP}"
+  REALM="${REALM:-NRSH13-HADOOP.COM}"
+  DNS_DOMAIN="${DNS_DOMAIN:-nrsh13-hadoop.com}"
+  ADMIN_PASS="${ADMIN_PASS:-Dummy@2929}"
+  USER_NAME="${USER_NAME:-768019}"
+  USER_PASS="${USER_PASS:-Dummy@2929}"
+  USER2_NAME="${USER2_NAME:-768020}"
+  USER2_PASS="${USER2_PASS:-Dummy@2929}"
+  GROUP_NAME="${GROUP_NAME:-A_HADOOP_ADMINS}"
+  SECOND_GROUP_NAME="${SECOND_GROUP_NAME:-A_Kafka_Users_Dev}"
+  CERT_BASENAME="${CERT_BASENAME:-kafka-lab01.nrsh13-hadoop.com}"
+  ROOT_CA_CERT="${ROOT_CA_CERT:-root-ca.crt}"
+
+  DEFAULT_CERT_DIRS=(
+    "/usr/nrsh13/GitHub/aws_confluent_kafka_setup/confluent_kafka_setup_secure/selfSignedCertificates"
+    "/var/ssl/private"
+  )
+
+  if [[ -n "${CERT_DIR:-}" ]]; then
+    CERT_DIR="${CERT_DIR}"
+  else
+    CERT_DIR=""
+    for candidate in "${DEFAULT_CERT_DIRS[@]}"; do
+      if [[ -d "$candidate" ]]; then
+        CERT_DIR="$candidate"
+        break
+      fi
+    done
+  fi
+
+  if [[ -z "${CERT_DIR:-}" ]]; then
+    CERT_DIR="/usr/nrsh13/GitHub/aws_confluent_kafka_setup/confluent_kafka_setup_secure/selfSignedCertificates"
+  fi
+
+  local candidate
+  for candidate in "${ROOT_CA_CERT:-root-ca.crt}" "ca.crt"; do
+    if [[ -f "$CERT_DIR/$candidate" ]]; then
+      ROOT_CA_CERT="$candidate"
+      break
+    fi
+  done
+}
+
+resolve_compose_cmd() {
+  if docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD="docker compose"
+  elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_CMD="docker-compose"
+  else
+    log_error "docker compose command not found"
+    exit 1
+  fi
+}
+
+exec_container() {
+  docker exec "$CONTAINER_NAME" bash -lc "$1"
+}
+
+container_running() {
+  docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null || echo false
+}
+
+find_cert_key_pair() {
+  local dir="$1"
+
+  if [[ -f "$dir/$CERT_BASENAME.crt" && -f "$dir/$CERT_BASENAME.key" ]]; then
+    return 0
+  fi
+
+  local certfile base keyfile
+  for certfile in "$dir"/*.crt; do
+    [[ -e "$certfile" ]] || continue
+    base=$(basename "$certfile" .crt)
+    if [[ "$base" == "root-ca" || "$base" == "ca" ]]; then
+      continue
+    fi
+    if [[ -f "$dir/$base.key" ]]; then
+      CERT_BASENAME="$base"
+      log_info "Using cert/key pair: $CERT_BASENAME.crt and $CERT_BASENAME.key"
+      return 0
+    fi
+  done
+
+  for keyfile in "$dir"/*.key; do
+    [[ -e "$keyfile" ]] || continue
+    base=$(basename "$keyfile" .key)
+    if [[ -f "$dir/$base.crt" ]]; then
+      CERT_BASENAME="$base"
+      log_info "Using cert/key pair: $CERT_BASENAME.crt and $CERT_BASENAME.key"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+install_tls_certs() {
+  if [[ ! -d "$CERT_DIR" ]]; then
+    log_warning "certificate directory $CERT_DIR does not exist"
+    return 0
+  fi
+
+  if [[ -f "$CERT_DIR/$CERT_BASENAME.crt" && -f "$CERT_DIR/$CERT_BASENAME.key" ]]; then
+    log_step "Installing TLS certs from $CERT_DIR"
+    exec_container "mkdir -p /var/lib/samba/private/tls"
+    docker cp "$CERT_DIR/$CERT_BASENAME.crt" "$CONTAINER_NAME":/var/lib/samba/private/tls/cert.pem
+    docker cp "$CERT_DIR/$CERT_BASENAME.key" "$CONTAINER_NAME":/var/lib/samba/private/tls/key.pem
+    if [[ -f "$CERT_DIR/$ROOT_CA_CERT" ]]; then
+      docker cp "$CERT_DIR/$ROOT_CA_CERT" "$CONTAINER_NAME":/var/lib/samba/private/tls/ca.pem
+    fi
+    exec_container "chown root:root /var/lib/samba/private/tls/* 2>/dev/null || true"
+    exec_container "chmod 0600 /var/lib/samba/private/tls/key.pem"
+  else
+    log_warning "expected cert/key not found in $CERT_DIR"
+  fi
+}
+
+configure_samba_tls() {
+  if ! docker exec "$CONTAINER_NAME" test -f /etc/samba/smb.conf >/dev/null 2>&1; then
+    return 0
+  fi
+
+  log_info "Configuring Samba TLS settings"
+  docker exec "$CONTAINER_NAME" bash -lc "sed -i '/^[[:space:]]*tls enabled/d;/^[[:space:]]*tls keyfile/d;/^[[:space:]]*tls certfile/d;/^[[:space:]]*tls cafile/d;/^[[:space:]]*ldap server require strong auth/d' /etc/samba/smb.conf"
+
+  if docker exec "$CONTAINER_NAME" test -f /var/lib/samba/private/tls/cert.pem >/dev/null 2>&1 \
+    && docker exec "$CONTAINER_NAME" test -f /var/lib/samba/private/tls/key.pem >/dev/null 2>&1; then
+    docker exec "$CONTAINER_NAME" bash -lc "awk '/^\[global\]/{print; print \"    ldap server require strong auth = no\"; print \"    tls enabled = yes\"; print \"    tls certfile = /var/lib/samba/private/tls/cert.pem\"; print \"    tls keyfile = /var/lib/samba/private/tls/key.pem\"; print \"    tls cafile = /var/lib/samba/private/tls/ca.pem\"; next}1' /etc/samba/smb.conf > /tmp/smb.conf.new && mv /tmp/smb.conf.new /etc/samba/smb.conf"
+  else
+    docker exec "$CONTAINER_NAME" bash -lc "awk '/^\[global\]/{print; print \"    ldap server require strong auth = no\"; next}1' /etc/samba/smb.conf > /tmp/smb.conf.new && mv /tmp/smb.conf.new /etc/samba/smb.conf"
+    log_warning "TLS cert/key pair unavailable, LDAPS will not be enabled"
+  fi
+}
+
+provision_users_and_groups() {
+  local user group
+
+  for user in "$USER_NAME" "$USER2_NAME"; do
+    if ! exec_container "samba-tool user list | grep -x '$user'" >/dev/null 2>&1; then
+      log_step "Creating user $user"
+      exec_container "samba-tool user create '$user' '$USER_PASS' --use-username-as-cn --must-change-at-next-login"
+    else
+      log_info "User $user exists"
+    fi
+
+    log_info "Setting password for $user"
+    exec_container "samba-tool user setpassword '$user' --newpassword='$USER_PASS'"
+  done
+
+  for group in "$GROUP_NAME" "$SECOND_GROUP_NAME"; do
+    if ! exec_container "samba-tool group list | grep -x '$group'" >/dev/null 2>&1; then
+      log_step "Creating group $group"
+      exec_container "samba-tool group add '$group'"
+    else
+      log_info "Group $group exists"
+    fi
+  done
+
+  log_step "Adding users to groups"
+  for group in "$GROUP_NAME" "$SECOND_GROUP_NAME"; do
+    for user in "$USER_NAME" "$USER2_NAME"; do
+      if exec_container "samba-tool group listmembers '$group' | grep -x '$user'" >/dev/null 2>&1; then
+        log_info "User $user already in group $group"
+      else
+        log_info "Adding $user to $group"
+        exec_container "samba-tool group addmembers '$group' '$user'"
+      fi
+    done
+  done
+}
+
+print_sample_ldapsearch() {
+  log_step "Sample ldapsearch command from the Mac host"
+
+  cat <<EOF
+Your Samba AD DC container is running as: $CONTAINER_NAME
+LDAP host: localhost
+Base DN: DC=nrsh13-hadoop,DC=com
+Realm: $REALM
+Password: $ADMIN_PASS
+
+ldapsearch -LLL \\
+  -H ldap://127.0.0.1:389 \\
+  -x \\
+  -D "CN=Administrator,CN=Users,DC=nrsh13-hadoop,DC=com" \\
+  -w '$ADMIN_PASS' \\
+  -b "DC=nrsh13-hadoop,DC=com" \\
+  "(sAMAccountName=$USER_NAME)"
+
+EOF
+}
+
+action_apply() {
+  print_module_header "Samba Active Directory — apply"
+
+  load_config
+  resolve_compose_cmd
+
+  if [[ -d "$CERT_DIR" ]] && ! find_cert_key_pair "$CERT_DIR"; then
+    log_warning "expected cert/key pair not found in $CERT_DIR"
+  fi
+
+  mkdir -p "$DATA_DIR"
+
+  log_step "Building Samba AD DC image"
+  cd "$ROOT_DIR"
+  docker build -t "$IMAGE_NAME" .
+
+  log_step "Starting container with persistent Samba volume"
+  $COMPOSE_CMD down || true
+  $COMPOSE_CMD up -d
+
+  install_tls_certs
+
+  if [[ "$(container_running)" != "true" ]]; then
+    log_info "Waiting for container $CONTAINER_NAME to start"
+    sleep 3
+  fi
+
+  if ! docker exec "$CONTAINER_NAME" test -f /var/lib/samba/private/secrets.tdb >/dev/null 2>&1; then
+    log_step "Provisioning Samba AD domain $REALM"
+    exec_container "rm -f /etc/samba/smb.conf"
+    exec_container "samba-tool domain provision --use-rfc2307 --realm='$REALM' --domain='$DOMAIN' --adminpass='$ADMIN_PASS' --server-role=dc --dns-backend=SAMBA_INTERNAL"
+  else
+    log_info "Samba AD already provisioned"
+  fi
+
+  configure_samba_tls
+
+  log_step "Setting Administrator password"
+  exec_container "samba-tool user setpassword Administrator --newpassword='$ADMIN_PASS'"
+
+  log_step "Restarting Samba"
+  exec_container "pkill -f '^samba:' || true"
+  exec_container "sleep 1 || true"
+
+  log_step "Starting Samba AD DC"
+  exec_container "nohup samba -i >/var/log/samba.log 2>&1 &"
+
+  log_step "Waiting for LDAP (389)"
+  exec_container "bash -lc 'for i in {1..30}; do echo > /dev/tcp/127.0.0.1/389 && exit 0; sleep 1; done; exit 1'"
+
+  provision_users_and_groups
+
+  log_step "LDAP test (connectivity check only)"
+  if exec_container "ldapsearch -LLL -H ldap://localhost -x -D 'CN=Administrator,CN=Users,DC=nrsh13-hadoop,DC=com' -w '$ADMIN_PASS' -b 'DC=nrsh13-hadoop,DC=com' '(sAMAccountName=$USER_NAME)'" >/dev/null 2>&1; then
+    log_success "LDAP query successful"
+  else
+    log_error "LDAP query failed"
+    exit 1
+  fi
+
+  print_sample_ldapsearch
+  log_success "Samba Active Directory apply complete"
+}
+
+action_destroy() {
+  print_module_header "Samba Active Directory — destroy"
+
+  load_config
+  resolve_compose_cmd
+
+  log_step "Stopping containers and removing volumes"
+  cd "$ROOT_DIR"
+  $COMPOSE_CMD down -v
+
+  log_success "Samba Active Directory destroy complete"
+}
+
+ACTION=""
+
+while [[ $# -gt 0 ]]; do
+  case "${1}" in
+    --action)
+      shift
+      ACTION="${1:-}"
+      if [[ -z "$ACTION" ]]; then
+        log_error "Missing value for --action (use apply|destroy)"
+        usage
+      fi
+      ;;
+    -h|h|--help|help)
+      usage
+      ;;
+    *)
+      log_error "Invalid option: $1"
+      usage
+      ;;
+  esac
+  shift
+done
+
+if [[ -z "$ACTION" ]]; then
+  usage
+fi
+
+if [[ ! "$ACTION" =~ ^(apply|destroy)$ ]]; then
+  log_error "Invalid --action: $ACTION (use apply|destroy)"
+  usage
+fi
+
+if [[ "$ACTION" == "apply" ]]; then
+  action_apply
+else
+  action_destroy
+fi
+
+duration=$SECONDS
+printf "\nTotal script execution time: %02d:%02d:%02d\n\n" $((duration / 3600)) $((duration / 60 % 60)) $((duration % 60))
