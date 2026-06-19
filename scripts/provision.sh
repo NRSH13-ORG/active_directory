@@ -247,9 +247,19 @@ configure_samba_tls() {
     && docker exec "$CONTAINER_NAME" test -f /var/lib/samba/private/tls/key.pem >/dev/null 2>&1; then
     docker exec "$CONTAINER_NAME" bash -lc "awk '/^\[global\]/{print; print \"    ldap server require strong auth = no\"; print \"    tls enabled = yes\"; print \"    tls certfile = /var/lib/samba/private/tls/cert.pem\"; print \"    tls keyfile = /var/lib/samba/private/tls/key.pem\"; print \"    tls cafile = /var/lib/samba/private/tls/ca.pem\"; next}1' /etc/samba/smb.conf > /tmp/smb.conf.new && mv /tmp/smb.conf.new /etc/samba/smb.conf"
   else
-    docker exec "$CONTAINER_NAME" bash -lc "awk '/^\[global\]/{print; print \"    ldap server require strong auth = no\"; next}1' /etc/samba/smb.conf > /tmp/smb.conf.new && mv /tmp/smb.conf.new /etc/samba/smb.conf"
-    log_warning "TLS cert/key pair unavailable, LDAPS will not be enabled"
+    docker exec "$CONTAINER_NAME" bash -lc "awk '/^\[global\]/{print; print \"    ldap server require strong auth = no\"; print \"    tls enabled = no\"; next}1' /etc/samba/smb.conf > /tmp/smb.conf.new && mv /tmp/smb.conf.new /etc/samba/smb.conf"
+    log_warning "TLS cert/key pair unavailable, LDAPS disabled (plain LDAP on 389)"
   fi
+}
+
+prepare_samba_data_dir() {
+  log_step "Preparing Samba data directory permissions"
+  exec_container "mkdir -p /var/lib/samba/private/tls /var/lib/samba/private/ldap_priv"
+  exec_container "chown -R root:root /var/lib/samba"
+  exec_container "chmod 755 /var/lib/samba /var/lib/samba/private"
+  exec_container "chmod 700 /var/lib/samba/private/tls /var/lib/samba/private/ldap_priv 2>/dev/null || true"
+  exec_container "find /var/lib/samba/private -maxdepth 1 -type f -exec chmod 600 {} + 2>/dev/null || true"
+  exec_container "find /var/lib/samba/private/sam.ldb.d -type f -exec chmod 600 {} + 2>/dev/null || true"
 }
 
 provision_users_and_groups() {
@@ -338,6 +348,8 @@ action_apply() {
     log_info "Waiting for container $CONTAINER_NAME to start"
     sleep 3
   fi
+
+  prepare_samba_data_dir
 
   if ! docker exec "$CONTAINER_NAME" test -f /var/lib/samba/private/secrets.tdb >/dev/null 2>&1; then
     log_step "Provisioning Samba AD domain $REALM"

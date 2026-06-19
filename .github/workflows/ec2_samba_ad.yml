@@ -55,14 +55,6 @@ jobs:
           ADMIN_SSH_CIDR: ${{ vars.ADMIN_SSH_CIDR }}
         run: bash samba-ad/ec2/scripts/ci-setup.sh
 
-      - name: Restore EC2 state
-        if: inputs.action == 'destroy'
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: ec2-instance-state
-          path: samba-ad/ec2/state/
-
       - name: Apply EC2 Samba AD
         if: inputs.action == 'apply'
         env:
@@ -73,7 +65,9 @@ jobs:
         if: inputs.action == 'destroy'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: bash scripts/provision.sh --action destroy --env ec2
+        run: |
+          echo "Destroy finds the instance by AWS tag (Name=${PROJECT_NAME}) — no artifact required"
+          bash scripts/provision.sh --action destroy --env ec2
 
       - name: Upload EC2 state
         if: inputs.action == 'apply' && success()
