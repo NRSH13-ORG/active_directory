@@ -105,6 +105,7 @@ mac_sync_and_bootstrap() {
   rsync -az --delete \
     --exclude '.git/' \
     --exclude '.env' \
+    --exclude 'samba-ad/data/' \
     --exclude 'samba-data/' \
     --exclude 'samba-ad/ec2/terraform/' \
     --exclude 'samba-ad/ec2/config.env' \

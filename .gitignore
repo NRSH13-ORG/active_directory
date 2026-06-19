@@ -3,6 +3,9 @@
 .env.local
 *.env
 
+# Docker named-volume data dirs (local only — never commit)
+samba-ad/data/
+
 # Legacy paths from before samba-ad/ restructure
 samba-data/
 samba-config/

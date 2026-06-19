@@ -120,58 +120,6 @@ resolve_compose_cmd() {
   fi
 }
 
-migrate_samba_storage() {
-  local legacy_data="${ROOT_DIR}/samba-data"
-  local vol
-
-  [[ -f "${DATA_DIR}/private/secrets.tdb" ]] && return 0
-
-  if [[ -d "$legacy_data" ]]; then
-    log_info "Migrating legacy ${legacy_data} → ${DATA_DIR}"
-    mkdir -p "$DATA_DIR"
-    cp -a "${legacy_data}/." "${DATA_DIR}/"
-  fi
-
-  for vol in samba-ad_samba-data ldap_platform_engineering_samba-data samba-data; do
-    if docker volume inspect "$vol" >/dev/null 2>&1; then
-      log_info "Migrating Docker volume ${vol} → ${DATA_DIR}"
-      mkdir -p "$DATA_DIR"
-      docker run --rm \
-        -v "${vol}:/from:ro" \
-        -v "${DATA_DIR}:/to" \
-        alpine:3.20 \
-        sh -c 'cp -a /from/. /to/' || true
-      break
-    fi
-  done
-}
-
-start_samba_ad() {
-  log_step "Starting Samba AD DC"
-  exec_container "pkill -f '^samba:' || true"
-  exec_container "sleep 2 || true"
-  exec_container "nohup samba -i >/var/log/samba.log 2>&1 &"
-}
-
-wait_for_ldap_port() {
-  local attempt max_attempts=120
-  log_step "Waiting for LDAP (389)"
-  for attempt in $(seq 1 "$max_attempts"); do
-    if exec_container "bash -lc 'echo > /dev/tcp/127.0.0.1/389'" >/dev/null 2>&1; then
-      log_success "LDAP port 389 is open"
-      return 0
-    fi
-    if (( attempt % 15 == 0 )); then
-      log_info "Still waiting for LDAP (${attempt}/${max_attempts})..."
-      exec_container "tail -20 /var/log/samba.log 2>/dev/null || true" || true
-    fi
-    sleep 2
-  done
-  log_error "LDAP did not become ready on port 389"
-  exec_container "tail -50 /var/log/samba.log 2>/dev/null || true" || true
-  return 1
-}
-
 exec_container() {
   docker exec "$CONTAINER_NAME" bash -lc "$1"
 }
@@ -247,19 +195,9 @@ configure_samba_tls() {
     && docker exec "$CONTAINER_NAME" test -f /var/lib/samba/private/tls/key.pem >/dev/null 2>&1; then
     docker exec "$CONTAINER_NAME" bash -lc "awk '/^\[global\]/{print; print \"    ldap server require strong auth = no\"; print \"    tls enabled = yes\"; print \"    tls certfile = /var/lib/samba/private/tls/cert.pem\"; print \"    tls keyfile = /var/lib/samba/private/tls/key.pem\"; print \"    tls cafile = /var/lib/samba/private/tls/ca.pem\"; next}1' /etc/samba/smb.conf > /tmp/smb.conf.new && mv /tmp/smb.conf.new /etc/samba/smb.conf"
   else
-    docker exec "$CONTAINER_NAME" bash -lc "awk '/^\[global\]/{print; print \"    ldap server require strong auth = no\"; print \"    tls enabled = no\"; next}1' /etc/samba/smb.conf > /tmp/smb.conf.new && mv /tmp/smb.conf.new /etc/samba/smb.conf"
-    log_warning "TLS cert/key pair unavailable, LDAPS disabled (plain LDAP on 389)"
+    docker exec "$CONTAINER_NAME" bash -lc "awk '/^\[global\]/{print; print \"    ldap server require strong auth = no\"; next}1' /etc/samba/smb.conf > /tmp/smb.conf.new && mv /tmp/smb.conf.new /etc/samba/smb.conf"
+    log_warning "TLS cert/key pair unavailable, LDAPS will not be enabled"
   fi
-}
-
-prepare_samba_data_dir() {
-  log_step "Preparing Samba data directory permissions"
-  exec_container "mkdir -p /var/lib/samba/private/tls /var/lib/samba/private/ldap_priv"
-  exec_container "chown -R root:root /var/lib/samba"
-  exec_container "chmod 755 /var/lib/samba /var/lib/samba/private"
-  exec_container "chmod 700 /var/lib/samba/private/tls /var/lib/samba/private/ldap_priv 2>/dev/null || true"
-  exec_container "find /var/lib/samba/private -maxdepth 1 -type f -exec chmod 600 {} + 2>/dev/null || true"
-  exec_container "find /var/lib/samba/private/sam.ldb.d -type f -exec chmod 600 {} + 2>/dev/null || true"
 }
 
 provision_users_and_groups() {
@@ -330,7 +268,6 @@ action_apply() {
     log_warning "expected cert/key pair not found in $CERT_DIR"
   fi
 
-  migrate_samba_storage
   mkdir -p "$DATA_DIR"
 
   log_step "Building Samba AD DC image"
@@ -349,8 +286,6 @@ action_apply() {
     sleep 3
   fi
 
-  prepare_samba_data_dir
-
   if ! docker exec "$CONTAINER_NAME" test -f /var/lib/samba/private/secrets.tdb >/dev/null 2>&1; then
     log_step "Provisioning Samba AD domain $REALM"
     exec_container "rm -f /etc/samba/smb.conf"
@@ -364,8 +299,15 @@ action_apply() {
   log_step "Setting Administrator password"
   exec_container "samba-tool user setpassword Administrator --newpassword='$ADMIN_PASS'"
 
-  start_samba_ad
-  wait_for_ldap_port || exit 1
+  log_step "Restarting Samba"
+  exec_container "pkill -f '^samba:' || true"
+  exec_container "sleep 1 || true"
+
+  log_step "Starting Samba AD DC"
+  exec_container "nohup samba -i >/var/log/samba.log 2>&1 &"
+
+  log_step "Waiting for LDAP (389)"
+  exec_container "bash -lc 'for i in {1..30}; do echo > /dev/tcp/127.0.0.1/389 && exit 0; sleep 1; done; exit 1'"
 
   provision_users_and_groups
 
