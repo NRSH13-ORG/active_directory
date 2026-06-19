@@ -4,7 +4,7 @@ set -euo pipefail
 ACTION="${1:-apply}"
 
 REPO_DIR="/opt/active_directory"
-SSH_USER="${SUDO_USER:-ubuntu}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 cd "$REPO_DIR"
 
@@ -12,25 +12,23 @@ if [[ ! -f .env ]]; then
   cp .env.example .env
 fi
 
-chown -R "${SSH_USER}:${SSH_USER}" "$REPO_DIR"
+echo "Ensuring Docker is installed and running..."
+bash "$SCRIPT_DIR/install-docker.sh"
 
-if ! groups "${SSH_USER}" | grep -q '\bdocker\b'; then
-  usermod -aG docker "${SSH_USER}"
-fi
+chown -R ubuntu:ubuntu "$REPO_DIR"
 
-systemctl is-active --quiet docker || systemctl start docker
-
+echo "Provisioning Samba AD (this may take several minutes)..."
 case "$ACTION" in
   apply)
-    sudo -u "${SSH_USER}" bash -lc "cd ${REPO_DIR} && sh scripts/provision.sh --action apply"
+    bash -lc "cd ${REPO_DIR} && sh scripts/provision.sh --action apply"
     ;;
   destroy)
-    if [[ -d "$REPO_DIR" ]]; then
-      sudo -u "${SSH_USER}" bash -lc "cd ${REPO_DIR} && sh scripts/provision.sh --action destroy" || true
-    fi
+    bash -lc "cd ${REPO_DIR} && sh scripts/provision.sh --action destroy" || true
     ;;
   *)
     echo "Usage: $0 apply|destroy" >&2
     exit 1
     ;;
 esac
+
+echo "Remote bootstrap finished successfully"

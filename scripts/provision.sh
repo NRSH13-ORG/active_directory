@@ -21,7 +21,7 @@ print_prerequisites_steps() {
   printf "  ${H_RED}2.${RESET} Provision the Samba AD domain controller (local):\n"
   banner_cmd "sh scripts/provision.sh --action apply"
   printf "  ${H_RED}3.${RESET} Provision on EC2:\n"
-  banner_cmd "export CLOUDFLARE_API_TOKEN='…' && sh scripts/provision.sh --action apply --env ec2"
+  banner_cmd "export AWS_ACCESS_KEY_ID='…' AWS_SECRET_ACCESS_KEY='…' CLOUDFLARE_API_TOKEN='…' && sh scripts/provision.sh --action apply --env ec2"
   printf "  ${H_RED}4.${RESET} Tear down local containers:\n"
   banner_cmd "sh scripts/provision.sh --action destroy"
   printf "  ${H_RED}5.${RESET} Tear down EC2:\n"
@@ -34,15 +34,14 @@ usage() {
 
   printf "${YELLOW}Synopsis${RESET}\n"
   usage_help_line "sh scripts/provision.sh --action apply|destroy [--env local|ec2]"
-  usage_help_line "sh scripts/provision.sh --action sync --env ec2"
   usage_synopsis_example "sh scripts/provision.sh --action apply"
-  usage_synopsis_example "export CLOUDFLARE_API_TOKEN='…' && sh scripts/provision.sh --action apply --env ec2"
+  usage_synopsis_example "export AWS_ACCESS_KEY_ID='…' AWS_SECRET_ACCESS_KEY='…' CLOUDFLARE_API_TOKEN='…' && sh scripts/provision.sh --action apply --env ec2"
   usage_synopsis_example "sh scripts/provision.sh --action destroy --env ec2"
   printf "\n"
 
   printf "${YELLOW}Environments${RESET}\n"
   printf "  local  (default)  Docker on this Mac\n"
-  printf "  ec2               AWS t3.micro + Cloudflare DNS\n\n"
+  printf "  ec2               AWS t3.micro + Cloudflare tunnel\n\n"
 
   printf "${YELLOW}Files${RESET}\n"
   printf "  .env.example           (copy to .env for local)\n"
@@ -343,7 +342,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ACTION="${1:-}"
       if [[ -z "$ACTION" ]]; then
-        log_error "Missing value for --action (use apply|destroy|sync)"
+        log_error "Missing value for --action (use apply|destroy)"
         usage
       fi
       ;;
@@ -386,16 +385,24 @@ if [[ "$ENV" == "local" ]]; then
     action_destroy
   fi
 else
-  if [[ ! "$ACTION" =~ ^(apply|destroy|sync)$ ]]; then
-    log_error "Invalid --action for ec2: $ACTION (use apply|destroy|sync)"
-    usage
-  fi
   # shellcheck source=../ec2/provision-ec2.sh
   source "$ROOT_DIR/ec2/provision-ec2.sh"
+
+  if [[ ! "$ACTION" =~ ^(apply|destroy)$ ]]; then
+    log_error "Invalid --action for ec2: $ACTION (use apply|destroy)"
+    ec2_usage
+  fi
+
+  ec2_print_action_header "$ACTION"
+  ec2_assert_prerequisites "$ACTION"
+
   case "$ACTION" in
-    apply) ec2_action_apply || usage ;;
-    destroy) ec2_action_destroy ;;
-    sync) ec2_action_sync || usage ;;
+    apply)
+      ec2_action_apply || ec2_usage
+      ;;
+    destroy)
+      ec2_action_destroy
+      ;;
   esac
 fi
 

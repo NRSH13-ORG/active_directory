@@ -1,6 +1,6 @@
 # Samba Active Directory
 
-A self-contained Samba AD domain controller for development and lab use. One script provisions either **local Docker on your Mac** or a **remote EC2 instance** with Cloudflare DNS — same domain, users, and groups in both environments.
+A self-contained Samba AD domain controller for development and lab use. One script provisions either **local Docker on your Mac** or a **remote EC2 instance** with Cloudflare Zero Trust tunnel — same domain, users, and groups in both environments.
 
 ## Overview
 
@@ -9,8 +9,8 @@ A self-contained Samba AD domain controller for development and lab use. One scr
 | **Command** | `sh scripts/provision.sh --action apply` | `sh scripts/provision.sh --action apply --env ec2` |
 | **Where AD runs** | Docker on your Mac | Docker on AWS t3.micro (Ubuntu 22.04) |
 | **LDAP URL** | `ldap://127.0.0.1:389` | `ldap://ldap.nrsh13-hadoop.com:389` |
-| **Reachable from** | This Mac only | Anywhere (security group + DNS) |
-| **Prerequisites** | Docker Desktop | AWS CLI, SSH key, Cloudflare API token |
+| **Reachable from** | This Mac only | Anywhere (Cloudflare tunnel + LDAP) |
+| **Prerequisites** | Docker Desktop | AWS credentials, AWS CLI, SSH key, Cloudflare API token, Zero Trust tunnel `ldap` |
 | **Typical use** | Local dev / Kafka LDAP auth testing | Shared lab DC reachable by remote clients |
 
 Both paths use the same `scripts/provision.sh` entry point. EC2 support files live under `ec2/` and are invoked automatically when `--env ec2` is set.
@@ -31,13 +31,22 @@ sh scripts/provision.sh --action apply
 ### EC2 (AWS + Cloudflare)
 
 ```bash
-# Prerequisites: AWS CLI configured, SSH key at ~/.ssh/id_rsa, Cloudflare token with DNS Edit
+export AWS_ACCESS_KEY_ID='your-key-id'
+export AWS_SECRET_ACCESS_KEY='your-secret-key'
 export CLOUDFLARE_API_TOKEN='your-token'
 cp ec2/config.env.example ec2/config.env   # optional — defaults are fine for first run
 sh scripts/provision.sh --action apply --env ec2
 ```
 
-First EC2 apply takes about **5–8 minutes** (instance launch, Docker install, Samba provision, DNS).
+**Re-run `apply`** on an existing instance anytime — it re-syncs the repo, re-provisions Samba AD, and refreshes tunnel/DNS/local Mac settings.
+
+First EC2 apply takes about **10–20 minutes**. The script does not finish until:
+
+1. Samba AD is running on EC2  
+2. Cloudflare tunnel connector is **HEALTHY**  
+3. DNS A record points to EC2  
+4. Mac local DNS is updated (cache flush + `/etc/hosts`) — **sudo password prompted once**  
+5. `ldapsearch` via `ldap.nrsh13-hadoop.com:389` succeeds for users **768019** and **768020**
 
 ---
 
@@ -51,9 +60,18 @@ First EC2 apply takes about **5–8 minutes** (instance launch, Docker install, 
 
 ### EC2
 
-- [AWS CLI](https://aws.amazon.com/cli/) configured (`aws sts get-caller-identity` works)
+- [AWS CLI](https://aws.amazon.com/cli/) installed
+- AWS credentials exported (or configured in `~/.aws/credentials`):
+
+```bash
+export AWS_ACCESS_KEY_ID='your-key-id'
+export AWS_SECRET_ACCESS_KEY='your-secret-key'
+```
+
+- Verify: `aws sts get-caller-identity`
 - SSH key pair (default: `~/.ssh/id_rsa` and `~/.ssh/id_rsa.pub`)
-- [Cloudflare API token](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/) with **DNS Edit** on zone `nrsh13-hadoop.com`
+- [Cloudflare API token](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/) with **DNS Edit** and **Cloudflare Tunnel Edit**
+- Zero Trust tunnel **`ldap`** created in [Cloudflare Connectors](https://dash.cloudflare.com/3e691c68591ed154e625790a60361b78/one/networks/connectors) (TCP route `ldap.nrsh13-hadoop.com` → `localhost:389`)
 - `rsync` (pre-installed on macOS)
 - Export before apply: `export CLOUDFLARE_API_TOKEN='…'`
 
@@ -98,9 +116,12 @@ Auto-created from `ec2/config.env.example` on first run (git-ignored):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CLOUDFLARE_API_TOKEN` | *(required)* | API token with DNS Edit |
+| `CLOUDFLARE_API_TOKEN` | *(required)* | API token (DNS Edit + Tunnel Edit) |
+| `CLOUDFLARE_ACCOUNT_ID` | `3e691c68591ed154e625790a60361b78` | Cloudflare account |
+| `CLOUDFLARE_TUNNEL_NAME` | `ldap` | Zero Trust tunnel name |
+| `CLOUDFLARE_TUNNEL_ID` | `8e89df70-…` | Tunnel UUID |
 | `CLOUDFLARE_ZONE_NAME` | `nrsh13-hadoop.com` | DNS zone |
-| `CLOUDFLARE_LDAP_HOSTNAME` | `ldap.nrsh13-hadoop.com` | LDAP hostname (A record) |
+| `CLOUDFLARE_LDAP_HOSTNAME` | `ldap.nrsh13-hadoop.com` | LDAP hostname (tunnel route) |
 
 ---
 
@@ -177,7 +198,10 @@ active_directory/
 │       ├── user-data.sh              # EC2 launch: Docker + swap
 │       ├── sync-and-bootstrap.sh     # Rsync repo to instance
 │       ├── remote-bootstrap.sh       # Runs local provision on EC2
-│       └── setup-cloudflare-dns.sh   # DNS-only A record
+│       ├── setup-cloudflare-tunnel.sh # cloudflared + wait HEALTHY
+│       ├── setup-cloudflare-dns.sh   # DNS-only A record
+│       ├── ensure-local-ldap-dns.sh  # Mac cache flush + /etc/hosts
+│       └── cleanup-local-ldap-dns.sh # remove /etc/hosts on destroy
 ├── docs/images/
 │   └── architecture-diagram.png
 ├── Dockerfile                # Samba AD DC image
@@ -185,6 +209,21 @@ active_directory/
 ├── .env.example              # Local settings template
 └── README.md
 ```
+
+---
+
+## Verify Cloudflare tunnel (EC2)
+
+After apply completes, confirm in the Cloudflare UI:
+
+- **Connectors:** https://dash.cloudflare.com/3e691c68591ed154e625790a60361b78/one/networks/connectors  
+  Tunnel **`ldap`** connector should show **HEALTHY**
+- **Tunnels:** https://dash.cloudflare.com/3e691c68591ed154e625790a60361b78/one/networks/tunnels  
+  Route: `ldap.nrsh13-hadoop.com` → `tcp://localhost:389`
+
+**LDAP DNS** uses a **DNS-only A record** (grey cloud) pointing to the EC2 public IP. The apply script also updates `/etc/hosts` on your Mac (`# BEGIN samba-ad-ec2`) and flushes the DNS cache so `ldap.nrsh13-hadoop.com` works immediately.
+
+The provision script does not finish until tunnel **HEALTHY** and hostname LDAP succeeds end-to-end.
 
 ---
 

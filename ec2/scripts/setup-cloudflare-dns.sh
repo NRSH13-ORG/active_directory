@@ -68,6 +68,13 @@ main() {
 
   lookup=$(cf_api GET "zones/${zone_id}/dns_records?name=${LDAP_HOSTNAME}")
   record_id=$(printf '%s' "$lookup" | python3 -c 'import json,sys; r=json.load(sys.stdin).get("result",[]); print(r[0]["id"] if r else "")')
+  record_type=$(printf '%s' "$lookup" | python3 -c 'import json,sys; r=json.load(sys.stdin).get("result",[]); print(r[0]["type"] if r else "")')
+
+  if [[ -n "$record_id" && "$record_type" != "A" ]]; then
+    log_info "Removing ${record_type} record for ${LDAP_HOSTNAME} (LDAP requires DNS-only A record)"
+    cf_api DELETE "zones/${zone_id}/dns_records/${record_id}" >/dev/null
+    record_id=""
+  fi
 
   payload=$(python3 -c 'import json,sys; print(json.dumps({"type":"A","name":sys.argv[1],"content":sys.argv[2],"proxied":False,"ttl":120}))' \
     "$RECORD_NAME" "$ec2_ip")
@@ -78,19 +85,6 @@ main() {
   else
     cf_api POST "zones/${zone_id}/dns_records" "$payload" >/dev/null
     log_success "DNS created: ${LDAP_HOSTNAME} → ${ec2_ip} (DNS only)"
-  fi
-
-  log_step "Testing LDAP via ${LDAP_HOSTNAME}:389"
-  if ldapsearch -LLL \
-    -H "ldap://${LDAP_HOSTNAME}:389" \
-    -x \
-    -D "CN=Administrator,CN=Users,DC=nrsh13-hadoop,DC=com" \
-    -w "${ADMIN_PASS:-Dummy@2929}" \
-    -b "DC=nrsh13-hadoop,DC=com" \
-    "(sAMAccountName=768019)" 2>/dev/null | grep -q '^dn:'; then
-    log_success "Direct LDAP query succeeded"
-  else
-    log_warning "LDAP test failed — wait for DNS TTL (~2 min) or re-run sync on EC2"
   fi
 }
 

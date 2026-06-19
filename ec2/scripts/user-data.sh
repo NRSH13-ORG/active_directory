@@ -17,6 +17,10 @@ apt-get install -y docker.io docker-compose-v2 ldap-utils rsync
 
 systemctl enable docker
 systemctl start docker
-usermod -aG docker ubuntu
+
+if getent group docker >/dev/null 2>&1; then
+  usermod -aG docker ubuntu
+fi
 
 install -d -o ubuntu -g ubuntu /opt/active_directory
+touch /var/lib/cloud/instance/user-data.done
