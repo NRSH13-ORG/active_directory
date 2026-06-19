@@ -174,8 +174,10 @@ ec2_load_config() {
   LDAP_INGRESS_CIDR="${LDAP_INGRESS_CIDR:-0.0.0.0/0}"
   ADMIN_SSH_CIDR="${ADMIN_SSH_CIDR:-$(curl -fsS https://checkip.amazonaws.com)/32}"
 
-  SSH_PUBLIC_KEY_FILE="${SSH_PUBLIC_KEY_FILE/#\~/$HOME}"
-  SSH_PRIVATE_KEY_PATH="${SSH_PRIVATE_KEY_PATH/#\~/$HOME}"
+  # shellcheck source=scripts/resolve-ssh-keys.sh
+  source "$EC2_SCRIPTS/resolve-ssh-keys.sh"
+  resolve_ssh_keys
+
   export AWS_DEFAULT_REGION="$AWS_REGION" AWS_REGION
 }
 

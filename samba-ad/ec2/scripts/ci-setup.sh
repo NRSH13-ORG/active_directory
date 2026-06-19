@@ -7,26 +7,24 @@ fi
 set -euo pipefail
 
 EC2_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SSH_DIR="${HOME}/.ssh"
-SSH_PRIVATE="${SSH_DIR}/ec2_provision"
-SSH_PUBLIC="${SSH_DIR}/ec2_provision.pub"
+EC2_SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# shellcheck source=resolve-ssh-keys.sh
+source "$EC2_SCRIPTS/resolve-ssh-keys.sh"
 
 log() { printf '%s\n' "$*"; }
 
 log "Installing runner dependencies"
 sudo apt-get update -qq
-sudo apt-get install -y -qq ldap-utils dnsutils rsync curl python3
+sudo apt-get install -y -qq ldap-utils dnsutils rsync curl python3 openssh-client
 
-: "${SSH_PRIVATE_KEY:?SSH_PRIVATE_KEY secret is required}"
-: "${SSH_PUBLIC_KEY:?SSH_PUBLIC_KEY secret is required}"
+if [[ -z "$(resolve_ssh_private_material)" ]]; then
+  log "ERROR: Set BITBUCKET_SSH_PRIVATE_KEY or SSH_PRIVATE_KEY"
+  exit 1
+fi
 
 log "Configuring SSH key pair"
-mkdir -p "$SSH_DIR"
-chmod 700 "$SSH_DIR"
-printf '%s\n' "$SSH_PRIVATE_KEY" >"$SSH_PRIVATE"
-printf '%s\n' "$SSH_PUBLIC_KEY" >"$SSH_PUBLIC"
-chmod 600 "$SSH_PRIVATE"
-chmod 644 "$SSH_PUBLIC"
+resolve_ssh_keys
 
 RUNNER_IP="$(curl -fsS https://checkip.amazonaws.com | tr -d '[:space:]')"
 ADMIN_SSH_CIDR="${ADMIN_SSH_CIDR:-${RUNNER_IP}/32}"
@@ -38,8 +36,8 @@ INSTANCE_TYPE=${INSTANCE_TYPE:-t3.micro}
 PROJECT_NAME=${PROJECT_NAME:-samba-ad-dc}
 KEY_NAME=${KEY_NAME:-samba-ad-dc}
 SSH_USER=${SSH_USER:-ubuntu}
-SSH_PUBLIC_KEY_FILE=${SSH_PUBLIC}
-SSH_PRIVATE_KEY_PATH=${SSH_PRIVATE}
+SSH_PUBLIC_KEY_FILE=${SSH_PUBLIC_KEY_FILE}
+SSH_PRIVATE_KEY_PATH=${SSH_PRIVATE_KEY_PATH}
 ADMIN_SSH_CIDR=${ADMIN_SSH_CIDR}
 LDAP_INGRESS_CIDR=${LDAP_INGRESS_CIDR:-0.0.0.0/0}
 

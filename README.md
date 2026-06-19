@@ -76,16 +76,18 @@ EC2 apply and destroy run from GitHub Actions — no local Mac required.
 | `AWS_ACCESS_KEY_ID` | IAM user access key with EC2 permissions |
 | `AWS_SECRET_ACCESS_KEY` | IAM secret key |
 | `CLOUDFLARE_API_TOKEN` | DNS Edit + Cloudflare Tunnel Edit (apply only) |
-| `SSH_PRIVATE_KEY` | PEM private key for SSH/rsync to EC2 |
-| `SSH_PUBLIC_KEY` | Matching public key (imported to AWS key pair) |
+| `BITBUCKET_SSH_PRIVATE_KEY` | SSH private key for EC2 access (public key derived automatically) |
 
-Generate an SSH key pair once and add both halves as secrets:
+`SSH_PRIVATE_KEY` / `SSH_PUBLIC_KEY` are optional overrides if you prefer separate secrets.
+
+For local EC2 runs, export the same key:
 
 ```bash
-ssh-keygen -t rsa -b 4096 -f ec2_provision -N ""
-# Add contents of ec2_provision → SSH_PRIVATE_KEY
-# Add contents of ec2_provision.pub → SSH_PUBLIC_KEY
+export BITBUCKET_SSH_PRIVATE_KEY="$(cat ~/.ssh/your_key)"
+sh scripts/provision.sh --action apply --env ec2
 ```
+
+Or set paths in `samba-ad/ec2/config.env` (`SSH_PRIVATE_KEY_PATH`, `SSH_PUBLIC_KEY_FILE`).
 
 **Optional repository variables** (defaults match `samba-ad/ec2/config.env.example`):
 

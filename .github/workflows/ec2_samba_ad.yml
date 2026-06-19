@@ -49,6 +49,7 @@ jobs:
 
       - name: Prepare runner
         env:
+          BITBUCKET_SSH_PRIVATE_KEY: ${{ secrets.BITBUCKET_SSH_PRIVATE_KEY }}
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
           ADMIN_SSH_CIDR: ${{ vars.ADMIN_SSH_CIDR }}
