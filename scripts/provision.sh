@@ -18,10 +18,14 @@ print_prerequisites_steps() {
 
   printf "  ${H_RED}1.${RESET} Copy and customize environment variables:\n"
   banner_cmd "cp .env.example .env"
-  printf "  ${H_RED}2.${RESET} Provision the Samba AD domain controller:\n"
+  printf "  ${H_RED}2.${RESET} Provision the Samba AD domain controller (local):\n"
   banner_cmd "sh scripts/provision.sh --action apply"
-  printf "  ${H_RED}3.${RESET} Tear down containers and volumes:\n"
+  printf "  ${H_RED}3.${RESET} Provision on EC2:\n"
+  banner_cmd "export CLOUDFLARE_API_TOKEN='…' && sh scripts/provision.sh --action apply --env ec2"
+  printf "  ${H_RED}4.${RESET} Tear down local containers:\n"
   banner_cmd "sh scripts/provision.sh --action destroy"
+  printf "  ${H_RED}5.${RESET} Tear down EC2:\n"
+  banner_cmd "sh scripts/provision.sh --action destroy --env ec2"
   printf "\n"
 }
 
@@ -29,14 +33,22 @@ usage() {
   print_module_header "Samba Active Directory"
 
   printf "${YELLOW}Synopsis${RESET}\n"
-  usage_help_line "sh scripts/provision.sh --action apply|destroy"
+  usage_help_line "sh scripts/provision.sh --action apply|destroy [--env local|ec2]"
+  usage_help_line "sh scripts/provision.sh --action sync --env ec2"
   usage_synopsis_example "sh scripts/provision.sh --action apply"
-  usage_synopsis_example "sh scripts/provision.sh --action destroy"
+  usage_synopsis_example "export CLOUDFLARE_API_TOKEN='…' && sh scripts/provision.sh --action apply --env ec2"
+  usage_synopsis_example "sh scripts/provision.sh --action destroy --env ec2"
   printf "\n"
 
+  printf "${YELLOW}Environments${RESET}\n"
+  printf "  local  (default)  Docker on this Mac\n"
+  printf "  ec2               AWS t3.micro + Cloudflare DNS\n\n"
+
   printf "${YELLOW}Files${RESET}\n"
-  printf "  .env.example  (copy to .env and customize)\n"
-  printf "  docker-compose.yml\n\n"
+  printf "  .env.example           (copy to .env for local)\n"
+  printf "  docker-compose.yml\n"
+  printf "  ec2/config.env.example (copy to ec2/config.env for EC2)\n"
+  printf "  ec2/state/instance.env (written after EC2 apply)\n\n"
 
   print_prerequisites_steps
   exit 1
@@ -323,6 +335,7 @@ action_destroy() {
 }
 
 ACTION=""
+ENV="local"
 
 while [[ $# -gt 0 ]]; do
   case "${1}" in
@@ -330,7 +343,15 @@ while [[ $# -gt 0 ]]; do
       shift
       ACTION="${1:-}"
       if [[ -z "$ACTION" ]]; then
-        log_error "Missing value for --action (use apply|destroy)"
+        log_error "Missing value for --action (use apply|destroy|sync)"
+        usage
+      fi
+      ;;
+    --env)
+      shift
+      ENV="${1:-}"
+      if [[ -z "$ENV" ]]; then
+        log_error "Missing value for --env (use local|ec2)"
         usage
       fi
       ;;
@@ -349,15 +370,33 @@ if [[ -z "$ACTION" ]]; then
   usage
 fi
 
-if [[ ! "$ACTION" =~ ^(apply|destroy)$ ]]; then
-  log_error "Invalid --action: $ACTION (use apply|destroy)"
+if [[ ! "$ENV" =~ ^(local|ec2)$ ]]; then
+  log_error "Invalid --env: $ENV (use local|ec2)"
   usage
 fi
 
-if [[ "$ACTION" == "apply" ]]; then
-  action_apply
+if [[ "$ENV" == "local" ]]; then
+  if [[ ! "$ACTION" =~ ^(apply|destroy)$ ]]; then
+    log_error "Invalid --action for local: $ACTION (use apply|destroy)"
+    usage
+  fi
+  if [[ "$ACTION" == "apply" ]]; then
+    action_apply
+  else
+    action_destroy
+  fi
 else
-  action_destroy
+  if [[ ! "$ACTION" =~ ^(apply|destroy|sync)$ ]]; then
+    log_error "Invalid --action for ec2: $ACTION (use apply|destroy|sync)"
+    usage
+  fi
+  # shellcheck source=../ec2/provision-ec2.sh
+  source "$ROOT_DIR/ec2/provision-ec2.sh"
+  case "$ACTION" in
+    apply) ec2_action_apply || usage ;;
+    destroy) ec2_action_destroy ;;
+    sync) ec2_action_sync || usage ;;
+  esac
 fi
 
 duration=$SECONDS
