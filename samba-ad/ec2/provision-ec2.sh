@@ -1,5 +1,5 @@
 # EC2 provisioning — sourced by scripts/provision.sh when --env ec2.
-# Helper scripts live in ec2/scripts/.
+# Helper scripts live in samba-ad/ec2/scripts/.
 
 EC2_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EC2_SCRIPTS="$EC2_ROOT/scripts"
@@ -36,8 +36,8 @@ ec2_usage() {
   printf "\n"
 
   printf "${YELLOW}Files${RESET}\n"
-  printf "  ec2/config.env.example (copy to ec2/config.env and customize)\n"
-  printf "  ec2/state/instance.env  (written after apply)\n\n"
+  printf "  samba-ad/ec2/config.env.example (copy to samba-ad/ec2/config.env and customize)\n"
+  printf "  samba-ad/ec2/state/instance.env  (written after apply)\n\n"
 
   ec2_print_prerequisites_steps
   exit 1
@@ -136,9 +136,9 @@ ec2_assert_prerequisites() {
 
 ec2_admin_pass() {
   local admin_pass="${ADMIN_PASS:-Dummy@2929}"
-  if [[ -f "$ROOT_DIR/.env" ]]; then
+  if [[ -f "$SAMBA_AD_DIR/.env" ]]; then
     # shellcheck disable=SC1091
-    source "$ROOT_DIR/.env"
+    source "$SAMBA_AD_DIR/.env"
     admin_pass="${ADMIN_PASS:-Dummy@2929}"
   fi
   printf '%s' "$admin_pass"
@@ -513,16 +513,25 @@ ec2_action_destroy() {
   ec2_load_config
   CLOUDFLARE_LDAP_HOSTNAME="${CLOUDFLARE_LDAP_HOSTNAME:-ldap.nrsh13-hadoop.com}"
   export CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_TUNNEL_ID CLOUDFLARE_TUNNEL_NAME CLOUDFLARE_ZONE_NAME CLOUDFLARE_LDAP_HOSTNAME
+
   if ec2_load_state && [[ -n "${INSTANCE_ID:-}" ]]; then
-    log_step "Terminating instance $INSTANCE_ID"
-    aws ec2 terminate-instances --instance-ids "$INSTANCE_ID" >/dev/null
-    aws ec2 wait instance-terminated --instance-ids "$INSTANCE_ID" || true
-    rm -f "$STATE_FILE"
-    if [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]; then
-      bash "$EC2_SCRIPTS/local-ldap-dns.sh" cleanup 2>/dev/null || true
-    fi
-    log_success "LDAP platform engineering EC2 destroy complete"
+    log_info "Using instance from state file: $INSTANCE_ID"
   else
-    log_warning "No instance in state file — nothing to destroy"
+    INSTANCE_ID="$(ec2_find_running_instance)"
+    if [[ -z "$INSTANCE_ID" || "$INSTANCE_ID" == "None" ]]; then
+      log_warning "No running instance found for tag Name=${PROJECT_NAME} — nothing to destroy"
+      rm -f "$STATE_FILE"
+      return 0
+    fi
+    log_info "Found instance $INSTANCE_ID by tag (no state file)"
   fi
+
+  log_step "Terminating instance $INSTANCE_ID"
+  aws ec2 terminate-instances --instance-ids "$INSTANCE_ID" >/dev/null
+  aws ec2 wait instance-terminated --instance-ids "$INSTANCE_ID" || true
+  rm -f "$STATE_FILE"
+  if [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]; then
+    bash "$EC2_SCRIPTS/local-ldap-dns.sh" cleanup 2>/dev/null || true
+  fi
+  log_success "LDAP platform engineering EC2 destroy complete"
 }

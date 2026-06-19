@@ -7,9 +7,10 @@ fi
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-STATE_FILE="$REPO_ROOT/ec2/state/instance.env"
-CONFIG_FILE="$REPO_ROOT/ec2/config.env"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+SAMBA_AD_DIR="$REPO_ROOT/samba-ad"
+STATE_FILE="$SAMBA_AD_DIR/ec2/state/instance.env"
+CONFIG_FILE="$SAMBA_AD_DIR/ec2/config.env"
 
 # shellcheck source=../../scripts/terminal-colors.sh
 source "$REPO_ROOT/scripts/terminal-colors.sh"
@@ -29,7 +30,7 @@ usage() {
   print_module_header "EC2 — Cloudflare (tunnel + DNS)"
   printf "${YELLOW}Synopsis${RESET}\n"
   usage_help_line "export CLOUDFLARE_API_TOKEN='…'"
-  usage_help_line "EC2_PUBLIC_IP=x.x.x.x sh ec2/scripts/setup-cloudflare.sh [tunnel|dns|all]"
+  usage_help_line "EC2_PUBLIC_IP=x.x.x.x sh samba-ad/ec2/scripts/setup-cloudflare.sh [tunnel|dns|all]"
   printf "\n"
   exit 1
 }

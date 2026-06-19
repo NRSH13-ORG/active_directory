@@ -47,13 +47,14 @@ install_docker() {
 remote_bootstrap() {
   local action="${1:-apply}"
   local repo_dir="/opt/ldap_platform_engineering"
+  local samba_ad_dir="${repo_dir}/samba-ad"
   local script_dir
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
   cd "$repo_dir"
 
-  if [[ ! -f .env ]]; then
-    cp .env.example .env
+  if [[ ! -f "${samba_ad_dir}/.env" ]]; then
+    cp "${samba_ad_dir}/.env.example" "${samba_ad_dir}/.env"
   fi
 
   echo "Ensuring Docker is installed and running..."
@@ -83,7 +84,7 @@ mac_sync_and_bootstrap() {
   local host="${AD_EC2_HOST:-}"
   local user="${AD_EC2_SSH_USER:-ubuntu}"
   local key="${AD_EC2_SSH_PRIVATE_KEY:-${SSH_PRIVATE_KEY_PATH:-$HOME/.ssh/id_rsa}}"
-  local repo_root="${AD_EC2_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+  local repo_root="${AD_EC2_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 
   key="${key/#\~/$HOME}"
 
@@ -104,16 +105,16 @@ mac_sync_and_bootstrap() {
   rsync -az --delete \
     --exclude '.git/' \
     --exclude '.env' \
-    --exclude 'samba-data/' \
-    --exclude 'samba-config/' \
-    --exclude 'ec2/terraform/' \
-    --exclude 'ec2/config.env' \
-    --exclude 'ec2/state/instance.env' \
+    --exclude 'samba-ad/data/' \
+    --exclude 'samba-ad/config/' \
+    --exclude 'samba-ad/ec2/terraform/' \
+    --exclude 'samba-ad/ec2/config.env' \
+    --exclude 'samba-ad/ec2/state/instance.env' \
     -e "ssh -i ${key} -o StrictHostKeyChecking=accept-new" \
     "${repo_root}/" "${user}@${host}:/opt/ldap_platform_engineering/"
 
   echo "Running remote bootstrap on ${host}..."
-  ssh_cmd "sudo bash /opt/ldap_platform_engineering/ec2/scripts/bootstrap.sh --remote ${action}"
+  ssh_cmd "sudo bash /opt/ldap_platform_engineering/samba-ad/ec2/scripts/bootstrap.sh --remote ${action}"
 }
 
 usage() {

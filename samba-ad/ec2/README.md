@@ -1,6 +1,6 @@
 # EC2 support files
 
-EC2 provisioning is handled by the main script — see the [root README](../README.md) for full documentation, architecture diagram, and troubleshooting.
+EC2 provisioning is handled by the main script — see the [root README](../../../README.md) for full documentation, architecture diagram, and troubleshooting.
 
 ```bash
 export CLOUDFLARE_API_TOKEN='…'

@@ -1,0 +1,103 @@
+name: EC2 Samba AD
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Provision or tear down EC2 Samba AD
+        required: true
+        type: choice
+        options:
+          - apply
+          - destroy
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ec2-samba-ad
+  cancel-in-progress: false
+
+jobs:
+  ec2:
+    name: EC2 ${{ inputs.action }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-2' }}
+      INSTANCE_TYPE: ${{ vars.INSTANCE_TYPE || 't3.micro' }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'samba-ad-dc' }}
+      KEY_NAME: ${{ vars.KEY_NAME || 'samba-ad-dc' }}
+      LDAP_INGRESS_CIDR: ${{ vars.LDAP_INGRESS_CIDR || '0.0.0.0/0' }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || '3e691c68591ed154e625790a60361b78' }}
+      CLOUDFLARE_TUNNEL_NAME: ${{ vars.CLOUDFLARE_TUNNEL_NAME || 'ldap' }}
+      CLOUDFLARE_TUNNEL_ID: ${{ vars.CLOUDFLARE_TUNNEL_ID || '8e89df70-60cb-4a37-a36e-1e5060dce023' }}
+      CLOUDFLARE_ZONE_NAME: ${{ vars.CLOUDFLARE_ZONE_NAME || 'nrsh13-hadoop.com' }}
+      CLOUDFLARE_LDAP_HOSTNAME: ${{ vars.CLOUDFLARE_LDAP_HOSTNAME || 'ldap.nrsh13-hadoop.com' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Prepare runner
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
+          ADMIN_SSH_CIDR: ${{ vars.ADMIN_SSH_CIDR }}
+        run: bash samba-ad/ec2/scripts/ci-setup.sh
+
+      - name: Restore EC2 state
+        if: inputs.action == 'destroy'
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: ec2-instance-state
+          path: samba-ad/ec2/state/
+
+      - name: Apply EC2 Samba AD
+        if: inputs.action == 'apply'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: bash scripts/provision.sh --action apply --env ec2
+
+      - name: Destroy EC2 Samba AD
+        if: inputs.action == 'destroy'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: bash scripts/provision.sh --action destroy --env ec2
+
+      - name: Upload EC2 state
+        if: inputs.action == 'apply' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ec2-instance-state
+          path: samba-ad/ec2/state/instance.env
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Job summary
+        if: inputs.action == 'apply' && success()
+        run: |
+          # shellcheck disable=SC1091
+          source samba-ad/ec2/state/instance.env
+          {
+            echo "## EC2 apply complete"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Instance ID | \`${INSTANCE_ID}\` |"
+            echo "| Public IP | \`${PUBLIC_IP}\` |"
+            echo "| LDAP URL | \`ldap://${CLOUDFLARE_LDAP_HOSTNAME}:389\` |"
+            echo ""
+            echo '```bash'
+            echo "ssh -i ~/.ssh/ec2_provision ubuntu@${PUBLIC_IP}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

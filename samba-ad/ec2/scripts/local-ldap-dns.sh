@@ -7,7 +7,7 @@ fi
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 # shellcheck source=../../scripts/terminal-colors.sh
 source "$REPO_ROOT/scripts/terminal-colors.sh"
@@ -19,8 +19,8 @@ HOSTS_END="# END samba-ad-ec2"
 
 usage() {
   print_module_header "EC2 — local LDAP DNS (Mac)"
-  usage_help_line "EC2_PUBLIC_IP=x.x.x.x sh ec2/scripts/local-ldap-dns.sh apply"
-  usage_help_line "sh ec2/scripts/local-ldap-dns.sh cleanup"
+  usage_help_line "EC2_PUBLIC_IP=x.x.x.x sh samba-ad/ec2/scripts/local-ldap-dns.sh apply"
+  usage_help_line "sh samba-ad/ec2/scripts/local-ldap-dns.sh cleanup"
   printf "\n"
   exit 1
 }

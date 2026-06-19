@@ -9,6 +9,8 @@ SECONDS=0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+SAMBA_AD_DIR="$ROOT_DIR/samba-ad"
+export SAMBA_AD_DIR ROOT_DIR
 
 # shellcheck source=terminal-colors.sh
 source "$SCRIPT_DIR/terminal-colors.sh"
@@ -17,7 +19,7 @@ print_prerequisites_steps() {
   print_prerequisites_heading "Docker Desktop · ldapsearch (brew install openldap)"
 
   printf "  ${H_RED}1.${RESET} Copy and customize environment variables:\n"
-  banner_cmd "cp .env.example .env"
+  banner_cmd "cp samba-ad/.env.example samba-ad/.env"
   printf "  ${H_RED}2.${RESET} Provision the Samba AD domain controller (local):\n"
   banner_cmd "sh scripts/provision.sh --action apply"
   printf "  ${H_RED}3.${RESET} Provision on EC2:\n"
@@ -44,24 +46,24 @@ usage() {
   printf "  ec2               AWS t3.micro + Cloudflare tunnel\n\n"
 
   printf "${YELLOW}Files${RESET}\n"
-  printf "  .env.example           (copy to .env for local)\n"
-  printf "  docker-compose.yml\n"
-  printf "  ec2/config.env.example (copy to ec2/config.env for EC2)\n"
-  printf "  ec2/state/instance.env (written after EC2 apply)\n\n"
+  printf "  samba-ad/.env.example           (copy to samba-ad/.env for local)\n"
+  printf "  samba-ad/docker-compose.yml\n"
+  printf "  samba-ad/ec2/config.env.example (copy to samba-ad/ec2/config.env for EC2)\n"
+  printf "  samba-ad/ec2/state/instance.env (written after EC2 apply)\n\n"
 
   print_prerequisites_steps
   exit 1
 }
 
 load_config() {
-  if [[ -f "$ROOT_DIR/.env" ]]; then
+  if [[ -f "$SAMBA_AD_DIR/.env" ]]; then
     set -a
     # shellcheck disable=SC1091
-    source "$ROOT_DIR/.env"
+    source "$SAMBA_AD_DIR/.env"
     set +a
   fi
 
-  DATA_DIR="${DATA_DIR:-$ROOT_DIR/samba-data}"
+  DATA_DIR="${DATA_DIR:-$SAMBA_AD_DIR/data}"
   IMAGE_NAME="${IMAGE_NAME:-local-samba-ad-dc}"
   CONTAINER_NAME="${CONTAINER_NAME:-samba-ad-dc}"
   DOMAIN="${DOMAIN:-NRSH13-HADOOP}"
@@ -269,11 +271,11 @@ action_apply() {
   mkdir -p "$DATA_DIR"
 
   log_step "Building Samba AD DC image"
-  cd "$ROOT_DIR"
+  cd "$SAMBA_AD_DIR"
   docker build -t "$IMAGE_NAME" .
 
   log_step "Starting container with persistent Samba volume"
-  cd "$ROOT_DIR"
+  cd "$SAMBA_AD_DIR"
   $COMPOSE_CMD down || true
   $COMPOSE_CMD up -d
 
@@ -328,7 +330,7 @@ action_destroy() {
   resolve_compose_cmd
 
   log_step "Stopping containers and removing volumes"
-  cd "$ROOT_DIR"
+  cd "$SAMBA_AD_DIR"
   $COMPOSE_CMD down -v
 
   log_success "LDAP platform engineering destroy complete"
@@ -386,8 +388,8 @@ if [[ "$ENV" == "local" ]]; then
     action_destroy
   fi
 else
-  # shellcheck source=../ec2/provision-ec2.sh
-  source "$ROOT_DIR/ec2/provision-ec2.sh"
+  # shellcheck source=../samba-ad/ec2/provision-ec2.sh
+  source "$SAMBA_AD_DIR/ec2/provision-ec2.sh"
 
   if [[ ! "$ACTION" =~ ^(apply|destroy)$ ]]; then
     log_error "Invalid --action for ec2: $ACTION (use apply|destroy)"
