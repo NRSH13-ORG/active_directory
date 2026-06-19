@@ -3,9 +3,6 @@
 .env.local
 *.env
 
-# Docker volumes (local Samba data — never commit)
-samba-ad/data/
-
 # Legacy paths from before samba-ad/ restructure
 samba-data/
 samba-config/

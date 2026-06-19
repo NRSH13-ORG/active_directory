@@ -1,0 +1,8 @@
+# Ephemeral runtime files — Samba creates these while the container is running
+ntp_signd/
+winbindd_privileged/
+private/ldap_priv/
+private/ldapi
+**/socket
+**/pipe
+*.lock

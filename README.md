@@ -250,6 +250,8 @@ ldap_platform_engineering/
 │   ├── Dockerfile            # Samba AD DC image
 │   ├── docker-compose.yml
 │   ├── .env.example          # Local Samba AD settings template
+│   ├── config/smb.conf       # Samba config (synced to EC2)
+│   ├── data/                 # AD domain data (synced to EC2)
 │   └── ec2/
 │       ├── provision-ec2.sh      # EC2 logic (sourced by provision.sh)
 │       ├── config.env.example    # EC2 settings template

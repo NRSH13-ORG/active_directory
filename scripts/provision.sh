@@ -150,7 +150,7 @@ start_samba_ad() {
   log_step "Starting Samba AD DC"
   exec_container "pkill -f '^samba:' || true"
   exec_container "sleep 2 || true"
-  exec_container "nohup samba -D >/var/log/samba.log 2>&1 &"
+  exec_container "nohup samba -i >/var/log/samba.log 2>&1 &"
 }
 
 wait_for_ldap_port() {
@@ -345,10 +345,6 @@ action_apply() {
     exec_container "samba-tool domain provision --use-rfc2307 --realm='$REALM' --domain='$DOMAIN' --adminpass='$ADMIN_PASS' --server-role=dc --dns-backend=SAMBA_INTERNAL"
   else
     log_info "Samba AD already provisioned"
-    if ! docker exec "$CONTAINER_NAME" test -f /etc/samba/smb.conf >/dev/null 2>&1; then
-      log_error "Samba data exists but /etc/samba/smb.conf is missing — check samba-config Docker volume"
-      exit 1
-    fi
   fi
 
   configure_samba_tls
