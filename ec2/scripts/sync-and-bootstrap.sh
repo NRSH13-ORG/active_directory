@@ -29,9 +29,9 @@ rsync -az --delete \
   --exclude '.env' \
   --exclude 'samba-data/' \
   --exclude 'samba-config/' \
-  --exclude 'ec2/terraform/.terraform/' \
-  --exclude 'ec2/terraform/*.tfstate' \
-  --exclude 'ec2/terraform/*.tfstate.*' \
+  --exclude 'ec2/terraform/' \
+  --exclude 'ec2/config.env' \
+  --exclude 'ec2/state/instance.env' \
   -e "ssh -i ${KEY} -o StrictHostKeyChecking=accept-new" \
   "${REPO_ROOT}/" "${USER}@${HOST}:/opt/active_directory/"
 

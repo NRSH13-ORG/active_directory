@@ -3,9 +3,14 @@
 .env.local
 *.env
 
-# Docker volumes (local Samba data)
+# Docker volumes (local Samba data — never commit)
 samba-data/
 samba-config/
+
+# EC2 local state and secrets
+ec2/config.env
+ec2/state/instance.env
+ec2/terraform/
 
 # macOS specific
 .DS_Store
