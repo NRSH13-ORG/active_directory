@@ -106,9 +106,7 @@ mac_sync_and_bootstrap() {
     --exclude '.git/' \
     --exclude '.env' \
     --exclude 'samba-ad/data/' \
-    --exclude 'samba-ad/config/' \
     --exclude 'samba-data/' \
-    --exclude 'samba-config/' \
     --exclude 'samba-ad/ec2/terraform/' \
     --exclude 'samba-ad/ec2/config.env' \
     --exclude 'samba-ad/ec2/state/instance.env' \

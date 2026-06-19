@@ -5,9 +5,8 @@
 
 # Docker volumes (local Samba data — never commit)
 samba-ad/data/
-samba-ad/config/
 
-# Legacy path from before samba-ad/ restructure
+# Legacy paths from before samba-ad/ restructure
 samba-data/
 samba-config/
 

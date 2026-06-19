@@ -64,7 +64,6 @@ load_config() {
   fi
 
   DATA_DIR="${DATA_DIR:-$SAMBA_AD_DIR/data}"
-  CONFIG_DIR="${CONFIG_DIR:-$SAMBA_AD_DIR/config}"
   IMAGE_NAME="${IMAGE_NAME:-local-samba-ad-dc}"
   CONTAINER_NAME="${CONTAINER_NAME:-samba-ad-dc}"
   DOMAIN="${DOMAIN:-NRSH13-HADOOP}"
@@ -123,7 +122,6 @@ resolve_compose_cmd() {
 
 migrate_samba_storage() {
   local legacy_data="${ROOT_DIR}/samba-data"
-  local legacy_config="${ROOT_DIR}/samba-config"
   local vol
 
   [[ -f "${DATA_DIR}/private/secrets.tdb" ]] && return 0
@@ -132,12 +130,6 @@ migrate_samba_storage() {
     log_info "Migrating legacy ${legacy_data} → ${DATA_DIR}"
     mkdir -p "$DATA_DIR"
     cp -a "${legacy_data}/." "${DATA_DIR}/"
-  fi
-
-  if [[ -d "$legacy_config" && ! -d "${CONFIG_DIR}/smb.conf.d" ]]; then
-    log_info "Migrating legacy ${legacy_config} → ${CONFIG_DIR}"
-    mkdir -p "$CONFIG_DIR"
-    cp -a "${legacy_config}/." "${CONFIG_DIR}/" 2>/dev/null || true
   fi
 
   for vol in samba-ad_samba-data ldap_platform_engineering_samba-data samba-data; do
@@ -152,21 +144,32 @@ migrate_samba_storage() {
       break
     fi
   done
+}
 
-  for vol in samba-ad_samba-config ldap_platform_engineering_samba-config samba-config; do
-    if docker volume inspect "$vol" >/dev/null 2>&1; then
-      if [[ ! -f "${CONFIG_DIR}/smb.conf" ]]; then
-        log_info "Migrating Docker volume ${vol} → ${CONFIG_DIR}"
-        mkdir -p "$CONFIG_DIR"
-        docker run --rm \
-          -v "${vol}:/from:ro" \
-          -v "${CONFIG_DIR}:/to" \
-          alpine:3.20 \
-          sh -c 'cp -a /from/. /to/' || true
-      fi
-      break
+start_samba_ad() {
+  log_step "Starting Samba AD DC"
+  exec_container "pkill -f '^samba:' || true"
+  exec_container "sleep 2 || true"
+  exec_container "nohup samba -D >/var/log/samba.log 2>&1 &"
+}
+
+wait_for_ldap_port() {
+  local attempt max_attempts=120
+  log_step "Waiting for LDAP (389)"
+  for attempt in $(seq 1 "$max_attempts"); do
+    if exec_container "bash -lc 'echo > /dev/tcp/127.0.0.1/389'" >/dev/null 2>&1; then
+      log_success "LDAP port 389 is open"
+      return 0
     fi
+    if (( attempt % 15 == 0 )); then
+      log_info "Still waiting for LDAP (${attempt}/${max_attempts})..."
+      exec_container "tail -20 /var/log/samba.log 2>/dev/null || true" || true
+    fi
+    sleep 2
   done
+  log_error "LDAP did not become ready on port 389"
+  exec_container "tail -50 /var/log/samba.log 2>/dev/null || true" || true
+  return 1
 }
 
 exec_container() {
@@ -318,7 +321,7 @@ action_apply() {
   fi
 
   migrate_samba_storage
-  mkdir -p "$DATA_DIR" "$CONFIG_DIR"
+  mkdir -p "$DATA_DIR"
 
   log_step "Building Samba AD DC image"
   cd "$SAMBA_AD_DIR"
@@ -342,6 +345,10 @@ action_apply() {
     exec_container "samba-tool domain provision --use-rfc2307 --realm='$REALM' --domain='$DOMAIN' --adminpass='$ADMIN_PASS' --server-role=dc --dns-backend=SAMBA_INTERNAL"
   else
     log_info "Samba AD already provisioned"
+    if ! docker exec "$CONTAINER_NAME" test -f /etc/samba/smb.conf >/dev/null 2>&1; then
+      log_error "Samba data exists but /etc/samba/smb.conf is missing — check samba-config Docker volume"
+      exit 1
+    fi
   fi
 
   configure_samba_tls
@@ -349,15 +356,8 @@ action_apply() {
   log_step "Setting Administrator password"
   exec_container "samba-tool user setpassword Administrator --newpassword='$ADMIN_PASS'"
 
-  log_step "Restarting Samba"
-  exec_container "pkill -f '^samba:' || true"
-  exec_container "sleep 1 || true"
-
-  log_step "Starting Samba AD DC"
-  exec_container "nohup samba -i >/var/log/samba.log 2>&1 &"
-
-  log_step "Waiting for LDAP (389)"
-  exec_container "bash -lc 'for i in {1..30}; do echo > /dev/tcp/127.0.0.1/389 && exit 0; sleep 1; done; exit 1'"
+  start_samba_ad
+  wait_for_ldap_port || exit 1
 
   provision_users_and_groups
 
