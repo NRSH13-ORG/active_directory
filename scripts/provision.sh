@@ -64,6 +64,7 @@ load_config() {
   fi
 
   DATA_DIR="${DATA_DIR:-$SAMBA_AD_DIR/data}"
+  CONFIG_DIR="${CONFIG_DIR:-$SAMBA_AD_DIR/config}"
   IMAGE_NAME="${IMAGE_NAME:-local-samba-ad-dc}"
   CONTAINER_NAME="${CONTAINER_NAME:-samba-ad-dc}"
   DOMAIN="${DOMAIN:-NRSH13-HADOOP}"
@@ -118,6 +119,54 @@ resolve_compose_cmd() {
     log_error "docker compose command not found"
     exit 1
   fi
+}
+
+migrate_samba_storage() {
+  local legacy_data="${ROOT_DIR}/samba-data"
+  local legacy_config="${ROOT_DIR}/samba-config"
+  local vol
+
+  [[ -f "${DATA_DIR}/private/secrets.tdb" ]] && return 0
+
+  if [[ -d "$legacy_data" ]]; then
+    log_info "Migrating legacy ${legacy_data} → ${DATA_DIR}"
+    mkdir -p "$DATA_DIR"
+    cp -a "${legacy_data}/." "${DATA_DIR}/"
+  fi
+
+  if [[ -d "$legacy_config" && ! -d "${CONFIG_DIR}/smb.conf.d" ]]; then
+    log_info "Migrating legacy ${legacy_config} → ${CONFIG_DIR}"
+    mkdir -p "$CONFIG_DIR"
+    cp -a "${legacy_config}/." "${CONFIG_DIR}/" 2>/dev/null || true
+  fi
+
+  for vol in samba-ad_samba-data ldap_platform_engineering_samba-data samba-data; do
+    if docker volume inspect "$vol" >/dev/null 2>&1; then
+      log_info "Migrating Docker volume ${vol} → ${DATA_DIR}"
+      mkdir -p "$DATA_DIR"
+      docker run --rm \
+        -v "${vol}:/from:ro" \
+        -v "${DATA_DIR}:/to" \
+        alpine:3.20 \
+        sh -c 'cp -a /from/. /to/' || true
+      break
+    fi
+  done
+
+  for vol in samba-ad_samba-config ldap_platform_engineering_samba-config samba-config; do
+    if docker volume inspect "$vol" >/dev/null 2>&1; then
+      if [[ ! -f "${CONFIG_DIR}/smb.conf" ]]; then
+        log_info "Migrating Docker volume ${vol} → ${CONFIG_DIR}"
+        mkdir -p "$CONFIG_DIR"
+        docker run --rm \
+          -v "${vol}:/from:ro" \
+          -v "${CONFIG_DIR}:/to" \
+          alpine:3.20 \
+          sh -c 'cp -a /from/. /to/' || true
+      fi
+      break
+    fi
+  done
 }
 
 exec_container() {
@@ -268,7 +317,8 @@ action_apply() {
     log_warning "expected cert/key pair not found in $CERT_DIR"
   fi
 
-  mkdir -p "$DATA_DIR"
+  migrate_samba_storage
+  mkdir -p "$DATA_DIR" "$CONFIG_DIR"
 
   log_step "Building Samba AD DC image"
   cd "$SAMBA_AD_DIR"

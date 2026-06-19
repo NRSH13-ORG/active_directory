@@ -17,10 +17,6 @@ services:
       - "139:139"
       - "445:445"
     volumes:
-      - samba-data:/var/lib/samba
-      - samba-config:/etc/samba
+      - ./data:/var/lib/samba
+      - ./config:/etc/samba
     command: ["tail", "-f", "/dev/null"]
-
-volumes:
-  samba-data:
-  samba-config:

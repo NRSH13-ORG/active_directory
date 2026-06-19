@@ -7,6 +7,10 @@
 samba-ad/data/
 samba-ad/config/
 
+# Legacy path from before samba-ad/ restructure
+samba-data/
+samba-config/
+
 # EC2 local state and secrets
 samba-ad/ec2/config.env
 samba-ad/ec2/state/instance.env
