@@ -460,8 +460,7 @@ ec2_print_cloudflare_verify() {
   banner_cmd "dig +short ${ldap_host}"
   printf "\n"
 
-  printf "${YELLOW}Local Mac${RESET} — /etc/hosts block ${CYAN}# BEGIN samba-ad-ec2${RESET}\n"
-  printf "\n"
+  printf "${YELLOW}Local Mac${RESET} — /etc/hosts block ${CYAN}# BEGIN samba-ad-ec2${RESET}\n\n"
 }
 
 ec2_provision_ad() {
@@ -508,7 +507,9 @@ ec2_action_apply() {
   ec2_save_state
   ec2_provision_ad
 
+  printf "\n"
   log_success "Samba Active Directory EC2 apply complete"
+  printf "\n"
 }
 
 ec2_action_destroy() {

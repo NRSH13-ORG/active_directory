@@ -2,6 +2,17 @@
 
 A self-contained Samba AD domain controller for development and lab use. One script provisions either **local Docker on your Mac** or a **remote EC2 instance** with Cloudflare Zero Trust tunnel — same domain, users, and groups in both environments.
 
+![Architecture overview](docs/images/architecture-diagram.png)
+
+## Architecture
+
+| Path | Flow |
+|------|------|
+| **Local** | Mac → Docker Desktop → `samba-ad-dc` container → `ldap://127.0.0.1:389` |
+| **EC2** | Mac runs `provision.sh --env ec2` → AWS t3.micro → Docker → Samba AD → Cloudflare tunnel (HEALTHY) + DNS-only A record → `ldap://ldap.nrsh13-hadoop.com:389` |
+
+Both paths use the same `scripts/provision.sh --action apply`. EC2 apply also rsyncs the repo, installs `cloudflared` on the instance, updates Cloudflare DNS, and flushes Mac local DNS (`/etc/hosts`).
+
 ## Overview
 
 | | Local (default) | EC2 |
