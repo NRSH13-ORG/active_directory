@@ -27,7 +27,7 @@ ec2_print_prerequisites_steps() {
 }
 
 ec2_usage() {
-  print_module_header "Samba Active Directory — EC2"
+  print_module_header "LDAP platform engineering — EC2"
 
   printf "${YELLOW}Synopsis${RESET}\n"
   usage_help_line "sh scripts/provision.sh --action apply|destroy --env ec2"
@@ -46,9 +46,9 @@ ec2_usage() {
 ec2_print_action_header() {
   local action="$1"
   case "$action" in
-    apply)   print_module_header "Samba Active Directory — EC2 apply" ;;
-    destroy) print_module_header "Samba Active Directory — EC2 destroy" ;;
-    *)       print_module_header "Samba Active Directory — EC2" ;;
+    apply)   print_module_header "LDAP platform engineering — EC2 apply" ;;
+    destroy) print_module_header "LDAP platform engineering — EC2 destroy" ;;
+    *)       print_module_header "LDAP platform engineering — EC2" ;;
   esac
 }
 
@@ -505,7 +505,7 @@ ec2_action_apply() {
   ec2_provision_ad
 
   printf "\n"
-  log_success "Samba Active Directory EC2 apply complete"
+  log_success "LDAP platform engineering EC2 apply complete"
   printf "\n"
 }
 
@@ -521,7 +521,7 @@ ec2_action_destroy() {
     if [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]; then
       bash "$EC2_SCRIPTS/local-ldap-dns.sh" cleanup 2>/dev/null || true
     fi
-    log_success "Samba Active Directory EC2 destroy complete"
+    log_success "LDAP platform engineering EC2 destroy complete"
   else
     log_warning "No instance in state file — nothing to destroy"
   fi

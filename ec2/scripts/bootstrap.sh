@@ -40,13 +40,13 @@ install_docker() {
     usermod -aG docker ubuntu 2>/dev/null || true
   fi
 
-  install -d -o ubuntu -g ubuntu /opt/active_directory
+  install -d -o ubuntu -g ubuntu /opt/ldap_platform_engineering
   touch /var/lib/cloud/instance/user-data.done 2>/dev/null || true
 }
 
 remote_bootstrap() {
   local action="${1:-apply}"
-  local repo_dir="/opt/active_directory"
+  local repo_dir="/opt/ldap_platform_engineering"
   local script_dir
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -98,7 +98,7 @@ mac_sync_and_bootstrap() {
       "${user}@${host}" "$@"
   }
 
-  ssh_cmd "sudo install -d -o ${user} -g ${user} /opt/active_directory"
+  ssh_cmd "sudo install -d -o ${user} -g ${user} /opt/ldap_platform_engineering"
 
   echo "Syncing repo to ${host}..."
   rsync -az --delete \
@@ -110,10 +110,10 @@ mac_sync_and_bootstrap() {
     --exclude 'ec2/config.env' \
     --exclude 'ec2/state/instance.env' \
     -e "ssh -i ${key} -o StrictHostKeyChecking=accept-new" \
-    "${repo_root}/" "${user}@${host}:/opt/active_directory/"
+    "${repo_root}/" "${user}@${host}:/opt/ldap_platform_engineering/"
 
   echo "Running remote bootstrap on ${host}..."
-  ssh_cmd "sudo bash /opt/active_directory/ec2/scripts/bootstrap.sh --remote ${action}"
+  ssh_cmd "sudo bash /opt/ldap_platform_engineering/ec2/scripts/bootstrap.sh --remote ${action}"
 }
 
 usage() {

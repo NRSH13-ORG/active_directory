@@ -1,6 +1,8 @@
-# Samba Active Directory
+# ldap_platform_engineering
 
-A self-contained Samba AD domain controller for development and lab use. One script provisions either **local Docker on your Mac** or a **remote EC2 instance** with Cloudflare Zero Trust tunnel — same domain, users, and groups in both environments.
+Samba AD domain controller for local Docker (Mac) or AWS EC2 with Cloudflare tunnel — one `provision.sh` for apply and destroy.
+
+**GitHub org:** [NRSH13-ORG/ldap_platform_engineering](https://github.com/NRSH13-ORG/ldap_platform_engineering)
 
 ![Architecture overview](docs/images/architecture-diagram.png)
 
@@ -197,7 +199,7 @@ ldapsearch -LLL \
 ## Repository layout
 
 ```
-active_directory/
+ldap_platform_engineering/
 ├── scripts/
 │   ├── provision.sh          # Single entry point (local + EC2)
 │   └── terminal-colors.sh    # Shared logging helpers

@@ -22,5 +22,5 @@ if getent group docker >/dev/null 2>&1; then
   usermod -aG docker ubuntu
 fi
 
-install -d -o ubuntu -g ubuntu /opt/active_directory
+install -d -o ubuntu -g ubuntu /opt/ldap_platform_engineering
 touch /var/lib/cloud/instance/user-data.done

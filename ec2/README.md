@@ -15,6 +15,6 @@ sh scripts/provision.sh --action apply --env ec2
 | `config.env.example` | AWS/SSH settings — copied to `config.env` on first run |
 | `state/instance.env` | Instance ID, IP, SSH details (written after apply) |
 | `scripts/user-data.sh` | EC2 launch bootstrap (Docker + swap) |
-| `scripts/bootstrap.sh` | Rsync repo to `/opt/active_directory` and run provision on instance |
+| `scripts/bootstrap.sh` | Rsync repo to `/opt/ldap_platform_engineering` and run provision on instance |
 | `scripts/setup-cloudflare.sh` | Cloudflare tunnel + DNS-only A record |
 | `scripts/local-ldap-dns.sh` | Mac `/etc/hosts` and DNS cache for LDAP hostname |

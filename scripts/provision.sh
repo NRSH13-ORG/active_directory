@@ -30,7 +30,7 @@ print_prerequisites_steps() {
 }
 
 usage() {
-  print_module_header "Samba Active Directory"
+  print_module_header "LDAP platform engineering"
 
   printf "${YELLOW}Synopsis${RESET}\n"
   usage_help_line "sh scripts/provision.sh --action apply|destroy [--env local|ec2]"
@@ -257,7 +257,7 @@ EOF
 }
 
 action_apply() {
-  print_module_header "Samba Active Directory — apply"
+  print_module_header "LDAP platform engineering — apply"
 
   load_config
   resolve_compose_cmd
@@ -317,11 +317,11 @@ action_apply() {
   fi
 
   print_sample_ldapsearch
-  log_success "Samba Active Directory apply complete"
+  log_success "LDAP platform engineering apply complete"
 }
 
 action_destroy() {
-  print_module_header "Samba Active Directory — destroy"
+  print_module_header "LDAP platform engineering — destroy"
 
   load_config
   resolve_compose_cmd
@@ -330,7 +330,7 @@ action_destroy() {
   cd "$ROOT_DIR"
   $COMPOSE_CMD down -v
 
-  log_success "Samba Active Directory destroy complete"
+  log_success "LDAP platform engineering destroy complete"
 }
 
 ACTION=""
