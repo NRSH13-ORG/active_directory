@@ -307,7 +307,7 @@ ec2_wait_for_cloud_init_and_docker() {
   done
 
   log_warning "Docker not ready after 15 min — installing on instance via SSH"
-  if ! ec2_ssh "sudo bash -s" <"$EC2_SCRIPTS/install-docker.sh"; then
+  if ! ec2_ssh "sudo bash -s -- --remote --docker-only" <"$EC2_SCRIPTS/bootstrap.sh"; then
     log_error "Failed to install Docker on instance"
     exit 1
   fi
@@ -330,7 +330,7 @@ ec2_sync_and_bootstrap() {
     AD_EC2_SSH_USER="$SSH_USER" \
     AD_EC2_SSH_PRIVATE_KEY="$SSH_PRIVATE_KEY_PATH" \
     AD_EC2_REPO_ROOT="$ROOT_DIR" \
-    bash "$EC2_SCRIPTS/sync-and-bootstrap.sh" apply; then
+    bash "$EC2_SCRIPTS/bootstrap.sh" apply; then
     log_error "Sync and bootstrap failed on ${PUBLIC_IP}"
     exit 1
   fi
@@ -409,17 +409,14 @@ ec2_verify_ldap_hostname() {
 ec2_finalize_networking() {
   local ldap_hostname="${CLOUDFLARE_LDAP_HOSTNAME:-ldap.nrsh13-hadoop.com}"
 
-  log_step "Setting up Cloudflare tunnel (cloudflared on EC2)"
+  log_step "Setting up Cloudflare tunnel and LDAP DNS"
   EC2_PUBLIC_IP="$PUBLIC_IP" \
   AD_EC2_SSH_USER="$SSH_USER" \
   AD_EC2_SSH_PRIVATE_KEY="$SSH_PRIVATE_KEY_PATH" \
-  bash "$EC2_SCRIPTS/setup-cloudflare-tunnel.sh" || exit 1
-
-  log_step "Setting up LDAP DNS (DNS-only A record → EC2)"
-  EC2_PUBLIC_IP="$PUBLIC_IP" bash "$EC2_SCRIPTS/setup-cloudflare-dns.sh" || exit 1
+  bash "$EC2_SCRIPTS/setup-cloudflare.sh" all || exit 1
 
   EC2_PUBLIC_IP="$PUBLIC_IP" CLOUDFLARE_LDAP_HOSTNAME="$ldap_hostname" \
-    bash "$EC2_SCRIPTS/ensure-local-ldap-dns.sh" || exit 1
+    bash "$EC2_SCRIPTS/local-ldap-dns.sh" apply || exit 1
 
   ec2_verify_ldap_hostname "$ldap_hostname" || exit 1
 }
@@ -522,7 +519,7 @@ ec2_action_destroy() {
     aws ec2 wait instance-terminated --instance-ids "$INSTANCE_ID" || true
     rm -f "$STATE_FILE"
     if [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]; then
-      bash "$EC2_SCRIPTS/cleanup-local-ldap-dns.sh" 2>/dev/null || true
+      bash "$EC2_SCRIPTS/local-ldap-dns.sh" cleanup 2>/dev/null || true
     fi
     log_success "Samba Active Directory EC2 destroy complete"
   else

@@ -206,13 +206,10 @@ active_directory/
 │   ├── config.env.example    # EC2 settings template
 │   ├── state/instance.env    # Written after EC2 apply (git-ignored)
 │   └── scripts/
-│       ├── user-data.sh              # EC2 launch: Docker + swap
-│       ├── sync-and-bootstrap.sh     # Rsync repo to instance
-│       ├── remote-bootstrap.sh       # Runs local provision on EC2
-│       ├── setup-cloudflare-tunnel.sh # cloudflared + wait HEALTHY
-│       ├── setup-cloudflare-dns.sh   # DNS-only A record
-│       ├── ensure-local-ldap-dns.sh  # Mac cache flush + /etc/hosts
-│       └── cleanup-local-ldap-dns.sh # remove /etc/hosts on destroy
+│       ├── user-data.sh           # EC2 launch: Docker + swap
+│       ├── bootstrap.sh           # Rsync repo + remote Samba provision
+│       ├── setup-cloudflare.sh    # Tunnel (HEALTHY) + DNS-only A record
+│       └── local-ldap-dns.sh      # Mac cache flush + /etc/hosts
 ├── docs/images/
 │   └── architecture-diagram.png
 ├── Dockerfile                # Samba AD DC image

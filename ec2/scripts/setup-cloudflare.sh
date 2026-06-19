@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install cloudflared on EC2, configure LDAP TCP tunnel route, wait until HEALTHY.
+# Cloudflare tunnel (cloudflared on EC2) + DNS-only A record for LDAP.
 if [ -z "${BASH_VERSION:-}" ]; then
   exec bash "$0" "$@"
 fi
@@ -9,6 +9,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 STATE_FILE="$REPO_ROOT/ec2/state/instance.env"
+CONFIG_FILE="$REPO_ROOT/ec2/config.env"
 
 # shellcheck source=../../scripts/terminal-colors.sh
 source "$REPO_ROOT/scripts/terminal-colors.sh"
@@ -20,29 +21,33 @@ ZONE_NAME="${CLOUDFLARE_ZONE_NAME:-nrsh13-hadoop.com}"
 LDAP_HOSTNAME="${CLOUDFLARE_LDAP_HOSTNAME:-ldap.nrsh13-hadoop.com}"
 LDAP_ORIGIN="${CLOUDFLARE_LDAP_ORIGIN:-tcp://localhost:389}"
 
+EC2_HOST=""
+SSH_USER="${AD_EC2_SSH_USER:-ubuntu}"
+SSH_PRIVATE_KEY_PATH="${AD_EC2_SSH_PRIVATE_KEY:-${SSH_PRIVATE_KEY_PATH:-$HOME/.ssh/id_rsa}}"
+
 usage() {
-  print_module_header "EC2 — Cloudflare Tunnel (LDAP)"
+  print_module_header "EC2 — Cloudflare (tunnel + DNS)"
   printf "${YELLOW}Synopsis${RESET}\n"
   usage_help_line "export CLOUDFLARE_API_TOKEN='…'"
-  usage_help_line "EC2_PUBLIC_IP=x.x.x.x sh ec2/scripts/setup-cloudflare-tunnel.sh"
+  usage_help_line "EC2_PUBLIC_IP=x.x.x.x sh ec2/scripts/setup-cloudflare.sh [tunnel|dns|all]"
   printf "\n"
-  printf "  ${H_CYAN}Prerequisite: Zero Trust tunnel '%s' created in Cloudflare UI${RESET}\n" "$TUNNEL_NAME"
-  printf "  ${H_CYAN}TCP route: %s → localhost:389${RESET}\n\n" "$LDAP_HOSTNAME"
   exit 1
 }
 
-[[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] || { log_error "CLOUDFLARE_API_TOKEN is not set"; usage; }
+load_cloudflare_config() {
+  if [[ -f "$CONFIG_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$CONFIG_FILE"
+    ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-$ACCOUNT_ID}"
+    TUNNEL_ID="${CLOUDFLARE_TUNNEL_ID:-$TUNNEL_ID}"
+    TUNNEL_NAME="${CLOUDFLARE_TUNNEL_NAME:-$TUNNEL_NAME}"
+    ZONE_NAME="${CLOUDFLARE_ZONE_NAME:-$ZONE_NAME}"
+    LDAP_HOSTNAME="${CLOUDFLARE_LDAP_HOSTNAME:-$LDAP_HOSTNAME}"
+  fi
+}
 
-CONFIG_FILE="$REPO_ROOT/ec2/config.env"
-if [[ -f "$CONFIG_FILE" ]]; then
-  # shellcheck disable=SC1090
-  source "$CONFIG_FILE"
-  ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-$ACCOUNT_ID}"
-  TUNNEL_ID="${CLOUDFLARE_TUNNEL_ID:-$TUNNEL_ID}"
-  TUNNEL_NAME="${CLOUDFLARE_TUNNEL_NAME:-$TUNNEL_NAME}"
-  ZONE_NAME="${CLOUDFLARE_ZONE_NAME:-$ZONE_NAME}"
-  LDAP_HOSTNAME="${CLOUDFLARE_LDAP_HOSTNAME:-$LDAP_HOSTNAME}"
-fi
+[[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] || { log_error "CLOUDFLARE_API_TOKEN is not set"; usage; }
+load_cloudflare_config
 
 cf_api() {
   local method="$1" endpoint="$2" data="${3:-}"
@@ -60,20 +65,18 @@ cf_api() {
   printf '%s' "$response"
 }
 
-resolve_ec2_host() {
-  local host="${EC2_PUBLIC_IP:-}"
-  if [[ -z "$host" && -f "$STATE_FILE" ]]; then
+resolve_ec2_ip() {
+  local ec2_ip="${EC2_PUBLIC_IP:-}"
+  if [[ -z "$ec2_ip" && -f "$STATE_FILE" ]]; then
     # shellcheck disable=SC1091
     source "$STATE_FILE"
-    host="${PUBLIC_IP:-}"
+    ec2_ip="${PUBLIC_IP:-}"
     SSH_USER="${SSH_USER:-ubuntu}"
     SSH_PRIVATE_KEY_PATH="${SSH_PRIVATE_KEY_PATH:-$HOME/.ssh/id_rsa}"
   fi
-  [[ -n "$host" ]] || { log_error "No EC2 public IP — set EC2_PUBLIC_IP or run apply first"; exit 1; }
-  SSH_USER="${AD_EC2_SSH_USER:-${SSH_USER:-ubuntu}}"
-  SSH_PRIVATE_KEY_PATH="${AD_EC2_SSH_PRIVATE_KEY:-${SSH_PRIVATE_KEY_PATH:-$HOME/.ssh/id_rsa}}"
+  [[ -n "$ec2_ip" ]] || { log_error "No EC2 public IP — run sh scripts/provision.sh --action apply --env ec2"; exit 1; }
   SSH_PRIVATE_KEY_PATH="${SSH_PRIVATE_KEY_PATH/#\~/$HOME}"
-  EC2_HOST="$host"
+  EC2_HOST="$ec2_ip"
 }
 
 fetch_tunnel_token() {
@@ -85,22 +88,20 @@ fetch_tunnel_token() {
   printf '%s' "$token"
 }
 
-ensure_tunnel_route() {
-  local payload
+setup_tunnel() {
+  local token payload
+
+  resolve_ec2_ip
 
   log_step "Configuring tunnel TCP route: ${LDAP_HOSTNAME} → ${LDAP_ORIGIN}"
-
   payload=$(python3 -c 'import json,sys; print(json.dumps({"config":{"ingress":[{"hostname":sys.argv[1],"service":sys.argv[2],"originRequest":{}},{"service":"http_status:404"}]}}))' \
     "$LDAP_HOSTNAME" "$LDAP_ORIGIN")
   cf_api PUT "accounts/${ACCOUNT_ID}/cfd_tunnel/${TUNNEL_ID}/configurations" "$payload" >/dev/null
   log_success "Tunnel ingress: ${LDAP_HOSTNAME} → ${LDAP_ORIGIN}"
   log_info "LDAP DNS is configured separately as DNS-only A record (proxied CNAME breaks LDAP)" >&2
-}
-
-install_cloudflared_on_ec2() {
-  local token="$1"
 
   log_step "Installing cloudflared on ${SSH_USER}@${EC2_HOST}"
+  token="$(fetch_tunnel_token)"
   if ! ssh -i "$SSH_PRIVATE_KEY_PATH" \
     -o BatchMode=yes \
     -o StrictHostKeyChecking=accept-new \
@@ -137,11 +138,9 @@ REMOTE
     exit 1
   fi
   log_success "cloudflared service is active on EC2"
-}
 
-wait_for_tunnel_healthy() {
-  local attempt status response
   log_step "Waiting for Cloudflare tunnel '${TUNNEL_NAME}' to become HEALTHY"
+  local attempt status response
   for attempt in $(seq 1 90); do
     response=$(cf_api GET "accounts/${ACCOUNT_ID}/cfd_tunnel/${TUNNEL_ID}")
     status=$(printf '%s' "$response" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("result",{}).get("status","unknown"))')
@@ -158,14 +157,60 @@ wait_for_tunnel_healthy() {
   exit 1
 }
 
-main() {
-  local token
-  resolve_ec2_host
-  ensure_tunnel_route
-  token="$(fetch_tunnel_token)"
-  install_cloudflared_on_ec2 "$token"
-  wait_for_tunnel_healthy
+setup_dns() {
+  local ec2_ip zone_id lookup record_id record_type payload
+  local record_name="${LDAP_HOSTNAME%.${ZONE_NAME}}"
+  [[ "$record_name" == "$LDAP_HOSTNAME" ]] && record_name="ldap"
+
+  resolve_ec2_ip
+  ec2_ip="$EC2_HOST"
+
+  log_step "Updating Cloudflare DNS: ${LDAP_HOSTNAME} → ${ec2_ip} (DNS only)"
+
+  zone_id="${CLOUDFLARE_ZONE_ID:-}"
+  if [[ -z "$zone_id" ]]; then
+    zone_id=$(cf_api GET "zones?name=${ZONE_NAME}&status=active" | python3 -c 'import json,sys; r=json.load(sys.stdin).get("result",[]); print(r[0]["id"] if r else "")')
+  fi
+  [[ -n "$zone_id" ]] || { log_error "Zone not found: ${ZONE_NAME}"; exit 1; }
+
+  lookup=$(cf_api GET "zones/${zone_id}/dns_records?name=${LDAP_HOSTNAME}")
+  record_id=$(printf '%s' "$lookup" | python3 -c 'import json,sys; r=json.load(sys.stdin).get("result",[]); print(r[0]["id"] if r else "")')
+  record_type=$(printf '%s' "$lookup" | python3 -c 'import json,sys; r=json.load(sys.stdin).get("result",[]); print(r[0]["type"] if r else "")')
+
+  if [[ -n "$record_id" && "$record_type" != "A" ]]; then
+    log_info "Removing ${record_type} record for ${LDAP_HOSTNAME} (LDAP requires DNS-only A record)"
+    cf_api DELETE "zones/${zone_id}/dns_records/${record_id}" >/dev/null
+    record_id=""
+  fi
+
+  payload=$(python3 -c 'import json,sys; print(json.dumps({"type":"A","name":sys.argv[1],"content":sys.argv[2],"proxied":False,"ttl":120}))' \
+    "$record_name" "$ec2_ip")
+
+  if [[ -n "$record_id" ]]; then
+    cf_api PUT "zones/${zone_id}/dns_records/${record_id}" "$payload" >/dev/null
+    log_success "DNS updated: ${LDAP_HOSTNAME} → ${ec2_ip} (DNS only)"
+  else
+    cf_api POST "zones/${zone_id}/dns_records" "$payload" >/dev/null
+    log_success "DNS created: ${LDAP_HOSTNAME} → ${ec2_ip} (DNS only)"
+  fi
 }
 
-[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && usage
-main
+ACTION="${1:-all}"
+[[ "${ACTION}" == "-h" || "${ACTION}" == "--help" ]] && usage
+
+case "$ACTION" in
+  tunnel)
+    setup_tunnel
+    ;;
+  dns)
+    setup_dns
+    ;;
+  all)
+    setup_tunnel
+    setup_dns
+    ;;
+  *)
+    log_error "Unknown action: ${ACTION} (use tunnel|dns|all)"
+    usage
+    ;;
+esac

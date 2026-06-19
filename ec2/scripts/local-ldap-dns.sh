@@ -1,5 +1,5 @@
 #!/bin/bash
-# Ensure Mac resolves LDAP hostname to EC2 IP (flush cache + /etc/hosts).
+# Mac local LDAP DNS: flush cache, /etc/hosts block, or cleanup on destroy.
 if [ -z "${BASH_VERSION:-}" ]; then
   exec bash "$0" "$@"
 fi
@@ -19,12 +19,24 @@ HOSTS_END="# END samba-ad-ec2"
 
 usage() {
   print_module_header "EC2 — local LDAP DNS (Mac)"
-  usage_help_line "EC2_PUBLIC_IP=x.x.x.x sh ec2/scripts/ensure-local-ldap-dns.sh"
+  usage_help_line "EC2_PUBLIC_IP=x.x.x.x sh ec2/scripts/local-ldap-dns.sh apply"
+  usage_help_line "sh ec2/scripts/local-ldap-dns.sh cleanup"
   printf "\n"
   exit 1
 }
 
-[[ -n "$EC2_IP" ]] || { log_error "EC2_PUBLIC_IP is required"; usage; }
+flush_macos_dns_cache() {
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  log_info "Flushing macOS DNS cache"
+  sudo dscacheutil -flushcache 2>/dev/null || true
+  sudo killall -HUP mDNSResponder 2>/dev/null || true
+}
+
+flush_macos_dns_cache_quiet() {
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  sudo dscacheutil -flushcache 2>/dev/null || true
+  sudo killall -HUP mDNSResponder 2>/dev/null || true
+}
 
 wait_for_public_dns() {
   local attempt resolved
@@ -42,19 +54,6 @@ wait_for_public_dns() {
   done
   log_error "Public DNS did not propagate to ${EC2_IP} within 3 minutes"
   exit 1
-}
-
-flush_macos_dns_cache() {
-  [[ "$(uname -s)" == "Darwin" ]] || return 0
-  log_info "Flushing macOS DNS cache"
-  sudo dscacheutil -flushcache 2>/dev/null || true
-  sudo killall -HUP mDNSResponder 2>/dev/null || true
-}
-
-flush_macos_dns_cache_quiet() {
-  [[ "$(uname -s)" == "Darwin" ]] || return 0
-  sudo dscacheutil -flushcache 2>/dev/null || true
-  sudo killall -HUP mDNSResponder 2>/dev/null || true
 }
 
 update_etc_hosts() {
@@ -109,7 +108,9 @@ wait_for_local_resolution() {
   exit 1
 }
 
-main() {
+apply_local_dns() {
+  [[ -n "$EC2_IP" ]] || { log_error "EC2_PUBLIC_IP is required"; usage; }
+
   if [[ "$(uname -s)" != "Darwin" ]]; then
     log_info "Skipping local DNS setup (not macOS)"
     wait_for_public_dns
@@ -129,5 +130,49 @@ main() {
   wait_for_local_resolution
 }
 
-[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && usage
-main
+cleanup_local_dns() {
+  [[ "$(uname -s)" == "Darwin" ]] || exit 0
+
+  if ! sudo -n true 2>/dev/null; then
+    sudo -v
+  fi
+
+  sudo python3 - "$HOSTS_BEGIN" "$HOSTS_END" <<'PY'
+import sys
+begin, end = sys.argv[1:3]
+path = "/etc/hosts"
+try:
+    lines = open(path).read().splitlines()
+except FileNotFoundError:
+    sys.exit(0)
+out, skip = [], False
+for line in lines:
+    stripped = line.strip()
+    if stripped == begin:
+        skip = True
+        continue
+    if stripped == end:
+        skip = False
+        continue
+    if skip:
+        continue
+    out.append(line)
+open(path, "w").write("\n".join(out) + ("\n" if out else ""))
+PY
+}
+
+ACTION="${1:-apply}"
+[[ "${ACTION}" == "-h" || "${ACTION}" == "--help" ]] && usage
+
+case "$ACTION" in
+  apply)
+    apply_local_dns
+    ;;
+  cleanup)
+    cleanup_local_dns
+    ;;
+  *)
+    log_error "Unknown action: ${ACTION} (use apply|cleanup)"
+    usage
+    ;;
+esac
