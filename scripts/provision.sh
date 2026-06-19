@@ -273,6 +273,11 @@ action_apply() {
   docker build -t "$IMAGE_NAME" .
 
   log_step "Starting container with persistent Samba volume"
+  cd "$ROOT_DIR"
+  if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
+    log_info "Removing existing container $CONTAINER_NAME (may be from a prior compose project)"
+    docker rm -f "$CONTAINER_NAME" || true
+  fi
   $COMPOSE_CMD down || true
   $COMPOSE_CMD up -d
 
@@ -328,7 +333,8 @@ action_destroy() {
 
   log_step "Stopping containers and removing volumes"
   cd "$ROOT_DIR"
-  $COMPOSE_CMD down -v
+  $COMPOSE_CMD down -v || true
+  docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
   log_success "LDAP platform engineering destroy complete"
 }

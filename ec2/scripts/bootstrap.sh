@@ -59,6 +59,17 @@ remote_bootstrap() {
   echo "Ensuring Docker is installed and running..."
   install_docker
 
+  if [[ -d /opt/active_directory ]]; then
+    echo "Removing legacy install path /opt/active_directory"
+    (cd /opt/active_directory && docker compose down 2>/dev/null) || true
+    rm -rf /opt/active_directory
+  fi
+
+  if docker ps -a --format '{{.Names}}' | grep -qx 'samba-ad-dc'; then
+    echo "Removing stale samba-ad-dc container (prior compose project)"
+    docker rm -f samba-ad-dc || true
+  fi
+
   chown -R ubuntu:ubuntu "$repo_dir"
 
   echo "Provisioning Samba AD (this may take several minutes)..."

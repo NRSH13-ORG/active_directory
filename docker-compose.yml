@@ -1,3 +1,5 @@
+name: samba-ad-lab
+
 services:
   ad-dc:
     build: .
